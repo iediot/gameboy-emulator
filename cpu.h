@@ -25,7 +25,20 @@ public:
     uint16_t SP = 0;
     uint16_t PC = 0;
 
-    // Helper functions
+    static constexpr uint8_t FLAG_Z = 0x80; // 10000000
+    static constexpr uint8_t FLAG_N = 0x40; // 01000000
+    static constexpr uint8_t FLAG_H = 0x20; // 00100000
+    static constexpr uint8_t FLAG_C = 0x10; // 00010000
+
+    // Helpers
+    void set_flag(uint8_t flag, bool value) {
+        if (value) {
+            F |= flag;
+        } else {
+            F &= ~flag;
+        }
+    }
+
     uint16_t combine(uint8_t high, uint8_t low) const {
         return static_cast<uint16_t>(high) << 8 | low;
     }
@@ -96,11 +109,118 @@ public:
                 break;
             }
         case 0x02: {
-                mem.write((static_cast<uint16_t>(B) << 8) | C, A);
+                mem.write(bc(), A);
                 break;
             }
         case 0x03: {
                 set_bc(bc() + 1);
+                break;
+            }
+        case 0x04: {
+                B++;
+                set_flag(FLAG_Z, B == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (B & 0x0F) == 0x00);
+                break;
+            }
+        case 0x05: {
+                B--;
+                set_flag(FLAG_Z, B == 0);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (B & 0x0F) == 0x0F);
+                break;
+            }
+        case 0x0C: {
+                C++;
+                set_flag(FLAG_Z, C == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (C & 0x0F) == 0x00);
+                break;
+            }
+        case 0x0D: {
+                C--;
+                set_flag(FLAG_Z, C == 0);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (C & 0x0F) == 0x0F);
+                break;
+            }
+        case 0x0E: {
+                C = mem.read(PC);
+                PC++;
+                break;
+            }
+        case 0x11: {
+                uint8_t low = mem.read(PC);
+                uint8_t high = mem.read(PC + 1);
+                set_de(combine(high, low));
+                PC += 2;
+                break;
+            }
+        case 0x12: {
+                mem.write(de(), A);
+                break;
+            }
+        case 0x14: {
+                D++;
+                set_flag(FLAG_Z, D == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (D & 0x0F) == 0x00);
+                break;
+        }
+        case 0x15: {
+                D--;
+                set_flag(FLAG_Z, D == 0);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (D & 0x0F) == 0x0F);
+                break;
+            }
+        case 0x1C: {
+                E++;
+                set_flag(FLAG_Z, E == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (E & 0x0F) == 0x00);
+                break;
+            }
+        case 0x1D: {
+                E--;
+                set_flag(FLAG_Z, E == 0);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (E & 0x0F) == 0x0F);
+                break;
+            }
+        case 0x21: {
+                uint8_t low = mem.read(PC);
+                uint8_t high = mem.read(PC + 1);
+                set_hl(combine(high, low));
+                PC += 2;
+                break;
+            }
+        case 0x2A: {
+                A = mem.read(hl());
+                set_hl(hl() + 1);
+                break;
+            }
+        case 0x31: {
+                uint8_t low = mem.read(PC);
+                uint8_t high = mem.read(PC + 1);
+                SP = combine(high, low);
+                PC += 2;
+                break;
+            }
+        case 0x40:
+            break;
+        case 0x47: {
+                B = A;
+                break;
+            }
+        case 0x52:
+            break;
+        case 0x64:
+            break;
+        case 0xC3: {
+                uint8_t low = mem.read(PC);
+                uint8_t high = mem.read(PC + 1);
+                PC = combine(high, low);
                 break;
             }
         default:
