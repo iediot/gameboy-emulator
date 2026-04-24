@@ -234,6 +234,10 @@ public:
                 break;
             }
 
+        case 0x28: {
+
+            }
+
         case 0x2A: {
                 A = mem.read(hl());
                 set_hl(hl() + 1);
@@ -283,10 +287,91 @@ public:
                 break;
             }
 
+        case 0xB0: {
+                A |= B;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB1: {
+                A |= C;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB2: {
+                A |= D;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB3: {
+                A |= E;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB4: {
+                A |= H;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB5: {
+                A |= L;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB6: {
+                A |= mem.read(hl());
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
+        case 0xB7: {
+                A |= A;
+                set_flag(FLAG_Z, A == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, false);
+                break;
+            }
+
         case 0xC3: {
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 PC = combine(high, low);
+                break;
+            }
+
+        case 0xC5: {
+                uint8_t low = bc();
+                uint8_t high = bc() >> 8;
+                mem.write(SP - 1, high);
+                mem.write(SP - 2, low);
+                SP -= 2;
                 break;
             }
 
@@ -310,6 +395,15 @@ public:
                 PC = combine(high, low);
                 break;
             }
+
+        case 0xD5: {
+                uint8_t low = de();
+                uint8_t high = de() >> 8;
+                mem.write(SP - 1, high);
+                mem.write(SP - 2, low);
+                SP -= 2;
+                break;
+        }
 
         case 0xE0: {
                 mem.write(0xFF00 + mem.read(PC), A);
