@@ -229,6 +229,11 @@ public:
                 break;
             }
 
+        case 0x23: {
+                set_hl(hl() + 1);
+                break;
+            }
+
         case 0x2A: {
                 A = mem.read(hl());
                 set_hl(hl() + 1);
@@ -312,6 +317,24 @@ public:
                 break;
             }
 
+        case 0xE1: {
+                uint8_t low = mem.read(SP);
+                SP++;
+                uint8_t high = mem.read(SP);
+                SP++;
+                set_hl(combine(high, low));
+                break;
+            }
+
+        case 0xE5: {
+                uint8_t low = hl();
+                uint8_t high = hl() >> 8;
+                mem.write(SP - 1, high);
+                mem.write(SP - 2, low);
+                SP -= 2;
+                break;
+            }
+
         case 0xEA: {
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
@@ -320,8 +343,26 @@ public:
                 break;
             }
 
+        case 0xF1: {
+                uint8_t low = mem.read(SP);
+                SP++;
+                uint8_t high = mem.read(SP);
+                SP++;
+                set_af(combine(high, low));
+                break;
+            }
+
         case 0xF3: {
                 IME = false;
+                break;
+            }
+
+        case 0xF5: {
+                uint8_t low = af();
+                uint8_t high = af() >> 8;
+                mem.write(SP - 1, high);
+                mem.write(SP - 2, low);
+                SP -= 2;
                 break;
             }
 
