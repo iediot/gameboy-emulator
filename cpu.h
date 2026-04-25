@@ -101,10 +101,10 @@ public:
 
         switch (opcode)
         {
-        case 0x00:
+        case 0x00: // NOP
             break;
 
-        case 0x01: {
+        case 0x01: { // LD BC, d16
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 set_bc(combine(high, low));
@@ -112,17 +112,17 @@ public:
                 break;
             }
 
-        case 0x02: {
+        case 0x02: { // LD (BC), A
                 mem.write(bc(), A);
                 break;
             }
 
-        case 0x03: {
+        case 0x03: { // INC BC
                 set_bc(bc() + 1);
                 break;
             }
 
-        case 0x04: {
+        case 0x04: { // INC B
                 B++;
                 set_flag(FLAG_Z, B == 0);
                 set_flag(FLAG_N, false);
@@ -130,7 +130,7 @@ public:
                 break;
             }
 
-        case 0x05: {
+        case 0x05: { // DEC B
                 B--;
                 set_flag(FLAG_Z, B == 0);
                 set_flag(FLAG_N, true);
@@ -138,7 +138,34 @@ public:
                 break;
             }
 
-        case 0x0C: {
+        case 0x06: { // LD B, d8
+                B = mem.read(PC);
+                PC++;
+                break;
+            }
+
+        case 0x07: { // RLCA
+                uint8_t saved_bit = (A >> 7) & 1;
+                A = A << 1;
+                A |= saved_bit;
+                set_flag(FLAG_Z, false);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, false);
+                set_flag(FLAG_C, saved_bit != 0x00);
+                break;
+            }
+
+        case 0x08: { // LD (a16), SP
+                uint8_t low = mem.read(PC);
+                uint8_t high = mem.read(PC + 1);
+                uint16_t address = combine(high, low);
+                mem.write(address, SP);
+                mem.write(address + 1, SP >> 8);
+                PC += 2;
+                break;
+            }
+
+        case 0x0C: { // INC C
                 C++;
                 set_flag(FLAG_Z, C == 0);
                 set_flag(FLAG_N, false);
@@ -146,7 +173,7 @@ public:
                 break;
             }
 
-        case 0x0D: {
+        case 0x0D: { // DEC C
                 C--;
                 set_flag(FLAG_Z, C == 0);
                 set_flag(FLAG_N, true);
@@ -154,13 +181,19 @@ public:
                 break;
             }
 
-        case 0x0E: {
+        case 0x0E: { // LD C, d8
                 C = mem.read(PC);
                 PC++;
                 break;
             }
 
-        case 0x11: {
+        case 0x10: { /* STOP (kinda useless as an instruction,
+                        therefore not yet implemented properly) */
+                PC++;
+                break;
+            }
+
+        case 0x11: { // LD DE, d16
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 set_de(combine(high, low));
@@ -168,12 +201,12 @@ public:
                 break;
             }
 
-        case 0x12: {
+        case 0x12: { // LD (DE), A
                 mem.write(de(), A);
                 break;
             }
 
-        case 0x14: {
+        case 0x14: { // INC D
                 D++;
                 set_flag(FLAG_Z, D == 0);
                 set_flag(FLAG_N, false);
@@ -181,7 +214,7 @@ public:
                 break;
             }
 
-        case 0x15: {
+        case 0x15: { // DEC D
                 D--;
                 set_flag(FLAG_Z, D == 0);
                 set_flag(FLAG_N, true);
@@ -189,13 +222,13 @@ public:
                 break;
             }
 
-        case 0x18: {
+        case 0x18: { // JR s8
                 int8_t offset = static_cast<int8_t>(mem.read(PC));
                 PC += offset + 1;
                 break;
             }
 
-        case 0x1C: {
+        case 0x1C: { // INC E
                 E++;
                 set_flag(FLAG_Z, E == 0);
                 set_flag(FLAG_N, false);
@@ -203,7 +236,7 @@ public:
                 break;
             }
 
-        case 0x1D: {
+        case 0x1D: { // DEC E
                 E--;
                 set_flag(FLAG_Z, E == 0);
                 set_flag(FLAG_N, true);
@@ -211,17 +244,16 @@ public:
                 break;
             }
 
-        case 0x20: {
+        case 0x20: { // JR NZ, s8
                 int8_t offset = static_cast<int8_t>(mem.read(PC));
                 PC++;
-                bool z = F & FLAG_Z;
-                if (!z) {
+                if (!(F & FLAG_Z)) {
                     PC += offset;
                 }
                 break;
             }
 
-        case 0x21: {
+        case 0x21: { // LD HL, d16
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 set_hl(combine(high, low));
@@ -229,22 +261,60 @@ public:
                 break;
             }
 
-        case 0x23: {
+        case 0x23: { // INC HL
                 set_hl(hl() + 1);
                 break;
             }
 
-        case 0x28: {
-
+        case 0x24: { // INC H
+                H++;
+                set_flag(FLAG_Z, H == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (H & 0x0F) == 0x00);
+                break;
             }
 
-        case 0x2A: {
+        case 0x25: { // DEC H
+                H--;
+                set_flag(FLAG_Z, H == 0);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (H & 0x0F) == 0x0F);
+                break;
+            }
+
+        case 0x28: { // JR Z, s8
+                int8_t offset = static_cast<int8_t>(mem.read(PC));
+                PC++;
+                if (F & FLAG_Z) {
+                    PC += offset;
+                }
+                break;
+            }
+
+        case 0x2A: { // LD A, (HL+)
                 A = mem.read(hl());
                 set_hl(hl() + 1);
                 break;
             }
 
-        case 0x31: {
+        case 0x2C: { // INC L
+                L++;
+                set_flag(FLAG_Z, L == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (L & 0x0F) == 0x00);
+                break;
+            }
+
+        case 0x30: { // JR NC, s8
+                int8_t offset = static_cast<int8_t>(mem.read(PC));
+                PC++;
+                if (!(F & FLAG_C)) {
+                    PC += offset;
+                }
+                break;
+            }
+
+        case 0x31: { // LD SP, d16
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 SP = combine(high, low);
@@ -252,25 +322,89 @@ public:
                 break;
             }
 
-        case 0x3E: {
+        case 0x33: { // INC SP
+                SP++;
+                break;
+            }
+
+        case 0x34: { // INC (HL)
+                uint8_t HL = mem.read(hl());
+                HL++;
+                mem.write(hl(), HL);
+                set_flag(FLAG_Z, HL == 0);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, (HL & 0x0F) == 0x00);
+                break;
+            }
+
+        case 0x35: { // DEC (HL)
+                uint8_t HL = mem.read(hl());
+                HL--;
+                mem.write(hl(), HL);
+                set_flag(FLAG_Z, HL == 0);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (HL & 0x0F) == 0x0F);
+                break;
+            }
+
+        case 0x38: { // JR C, s8
+                int8_t offset = static_cast<int8_t>(mem.read(PC));
+                PC++;
+                if (F & FLAG_C) {
+                    PC += offset;
+                }
+                break;
+            }
+
+        case 0x3E: { // LD A, d8
                 A = mem.read(PC);
                 PC++;
                 break;
             }
 
-        case 0x40:
+        case 0x40: // LD B, B
             break;
 
-        case 0x47: {
+        case 0x41: { // LD B, C
+                B = C;
+                break;
+            }
+
+        case 0x42: { // LD B, D
+                B = D;
+                break;
+            }
+
+        case 0x43: { // LD B, E
+                B = E;
+                break;
+            }
+
+        case 0x44: { // LD B, H
+                B = H;
+                break;
+            }
+
+        case 0x45: { // LD B, L
+                B = L;
+                break;
+            }
+
+        case 0x47: { // LD B, A
                 B = A;
                 break;
             }
 
-        case 0x52:
+        case 0x52: // LD D, D
             break;
 
         case 0x64:
             break;
+
+        case 0x77: {
+                mem.write(hl(), A);
+                break;
+            }
 
         case 0x78: {
                 A = B;
@@ -280,7 +414,7 @@ public:
         case 0x7C: {
                 A = H;
                 break;
-        }
+            }
 
         case 0x7D: {
                 A = L;
@@ -359,10 +493,36 @@ public:
                 break;
             }
 
+        case 0xC1: {
+                uint8_t low = mem.read(SP);
+                SP++;
+                uint8_t high = mem.read(SP);
+                SP++;
+                set_bc(combine(high, low));
+                break;
+            }
+
         case 0xC3: {
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 PC = combine(high, low);
+                break;
+            }
+
+        case 0xC4: {
+                if (!(F & FLAG_Z))
+                {
+                    uint8_t low = mem.read(PC);
+                    uint8_t high = mem.read(PC + 1);
+                    PC += 2;
+                    SP--;
+                    mem.write(SP, (PC >> 8) & 0xFF);
+                    SP--;
+                    mem.write(SP, PC & 0xFF);
+                    PC = combine(high, low);
+                }
+                else
+                    PC += 2;
                 break;
             }
 
@@ -396,6 +556,15 @@ public:
                 break;
             }
 
+        case 0xD1: {
+                uint8_t low = mem.read(SP);
+                SP++;
+                uint8_t high = mem.read(SP);
+                SP++;
+                set_de(combine(high, low));
+                break;
+            }
+
         case 0xD5: {
                 uint8_t low = de();
                 uint8_t high = de() >> 8;
@@ -403,7 +572,7 @@ public:
                 mem.write(SP - 2, low);
                 SP -= 2;
                 break;
-        }
+            }
 
         case 0xE0: {
                 mem.write(0xFF00 + mem.read(PC), A);
@@ -429,11 +598,27 @@ public:
                 break;
             }
 
+        case 0xE6: {
+                A = A & mem.read(PC);
+                set_flag(FLAG_Z, A == 0x00);
+                set_flag(FLAG_N, false);
+                set_flag(FLAG_H, true);
+                set_flag(FLAG_C, false);
+                PC++;
+                break;
+            }
+
         case 0xEA: {
                 uint8_t low = mem.read(PC);
                 uint8_t high = mem.read(PC + 1);
                 mem.write(combine(high, low), A);
                 PC += 2;
+                break;
+            }
+
+        case 0xF0: {
+                A = mem.read(0xFF00 + mem.read(PC));
+                PC++;
                 break;
             }
 
@@ -457,6 +642,24 @@ public:
                 mem.write(SP - 1, high);
                 mem.write(SP - 2, low);
                 SP -= 2;
+                break;
+            }
+
+        case 0xFA: {
+                uint8_t low = mem.read(PC);
+                uint8_t high = mem.read(PC + 1);
+                A = mem.read(combine(high, low));
+                PC += 2;
+                break;
+            }
+
+        case 0xFE: {
+                uint8_t d8 = mem.read(PC);
+                set_flag(FLAG_Z, A == d8);
+                set_flag(FLAG_N, true);
+                set_flag(FLAG_H, (A & 0x0F) < (d8 & 0x0F));
+                set_flag(FLAG_C, A < d8);
+                PC++;
                 break;
             }
 
