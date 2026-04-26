@@ -2,9 +2,7 @@
 // Created by edi on 4/22/26.
 //
 
-#include <cstdint>
 #include <iostream>
-#include "memory.h"
 #include "cpu.h"
 
 void Cpu::set_flag(uint8_t flag, bool value) {

@@ -5,6 +5,7 @@
 #ifndef GAMEBOY_EMU_CPU_H
 #define GAMEBOY_EMU_CPU_H
 
+
 #include <cstdint>
 #include "memory.h"
 
