@@ -48,6 +48,8 @@ public:
     void set_de(uint16_t value);
     [[nodiscard]] uint16_t hl() const;
     void set_hl(uint16_t value);
+    [[nodiscard]] uint8_t rr(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t rrc(uint8_t value, bool set_z);
 
     // Main loop
     void step();
