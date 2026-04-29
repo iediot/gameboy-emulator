@@ -86,6 +86,16 @@ uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the rrc operations
     return value;
 }
 
+uint8_t Cpu::srl(uint8_t value) { // helper for the srl operations
+    uint8_t saved_bit = value & 1;
+    value = value >> 1;
+    set_flag(FLAG_Z, value == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, saved_bit != 0x00);
+    return value;
+}
+
 Cpu::Cpu(Memory& memory) : mem(memory) {
     A = 0x01;
     F = 0xB0;
@@ -510,16 +520,117 @@ void Cpu::step() {
             break;
         }
 
+    case 0x48: { // LD C, B
+            C = B;
+            break;
+        }
+
+    case 0x49: // LD C, C
+        break;
+
+    case 0x4A: { // LD C, D
+            C = D;
+            break;
+        }
+
+    case 0x4B: { // LD C, E
+            C = E;
+            break;
+        }
+
+    case 0x4C: { // LD C, H
+            C = H;
+            break;
+        }
+
+    case 0x4D: { // LD C, L
+            C = L;
+            break;
+        }
+
     case 0x4E: { // LD C, (HL)
             C = mem.read(hl());
+            break;
+        }
+
+    case 0x4F: { // LD C, A
+            C = A;
+            break;
+        }
+
+    case 0x50: { // LD D, B
+            D = B;
+            break;
+        }
+
+    case 0x51: { // LD D, C
+            D = C;
             break;
         }
 
     case 0x52: // LD D, D
         break;
 
+    case 0x53: { // LD D, E
+            D = E;
+            break;
+        }
+
+    case 0x54: { // LD D, H
+            D = H;
+            break;
+        }
+
+    case 0x55: { // LD D, L
+            D = L;
+            break;
+        }
+
     case 0x56: { // LD D, (HL)
             D = mem.read(hl());
+            break;
+        }
+
+    case 0x57: { // LD D, A
+            D = A;
+            break;
+        }
+
+    case 0x58: { // LD E, B
+            E = B;
+            break;
+        }
+
+    case 0x59: { // LD E, C
+            E = C;
+            break;
+        }
+
+    case 0x5A: { // LD E, D
+            E = D;
+            break;
+        }
+
+    case 0x5B:// LD E, E
+        break;
+
+    case 0x5C: { // LD E, H
+            E = H;
+            break;
+        }
+
+    case 0x5D: { // LD E, L
+            E = L;
+            break;
+        }
+
+    case 0x5E: { // LD E, (HL)
+            E = mem.read(hl());
+            break;
+        }
+
+    case 0x5F: { // LD E, A
+            E = A;
             break;
         }
 
@@ -556,13 +667,107 @@ void Cpu::step() {
             break;
         }
 
-    case 0x77: {
+    case 0x67: { // LD H, A
+            H = A;
+            break;
+        }
+
+    case 0x68: { // LD L, B
+            L = B;
+            break;
+        }
+
+    case 0x69: { // LD L, C
+            L = C;
+            break;
+        }
+
+    case 0x6A: { // LD L, D
+            L = D;
+            break;
+        }
+
+    case 0x6B: { // LD L, E
+            L = E;
+            break;
+        }
+
+    case 0x6C: { // LD L, H
+            L = H;
+            break;
+        }
+
+    case 0x6D: // LD L, L
+        break;
+
+    case 0x6E: { // LD L, (HL)
+            L = mem.read(hl());
+            break;
+        }
+
+    case 0x6F: { // LD L, A
+            L = A;
+            break;
+        }
+
+    case 0x70: { // LD (HL), B
+            mem.write(hl(), B);
+            break;
+        }
+
+    case 0x71: { // LD (HL), C
+            mem.write(hl(), C);
+            break;
+        }
+
+    case 0x72: { // LD (HL), D
+            mem.write(hl(), D);
+            break;
+        }
+
+    case 0x73: { // LD (HL), E
+            mem.write(hl(), E);
+            break;
+        }
+
+    case 0x74: { // LD (HL), H
+            mem.write(hl(), H);
+            break;
+        }
+
+    case 0x75: { // LD (HL), L
+            mem.write(hl(), L);
+            break;
+        }
+
+    case 0x76: { // HALT
+            // treated as NOP now
+            // TODO: proper halt and interrupt handling
+            break;
+        }
+
+    case 0x77: { // LD (HL), A
             mem.write(hl(), A);
             break;
         }
 
-    case 0x78: {
+    case 0x78: { // LD A, B
             A = B;
+            break;
+        }
+
+    case 0x79: { // LD A, C
+            A = C;
+            break;
+        }
+
+    case 0x7A: { // LD A, D
+            A = D;
+            break;
+        }
+
+    case 0x7B: { // LD A, E
+            A = E;
             break;
         }
 
@@ -575,6 +780,14 @@ void Cpu::step() {
             A = L;
             break;
         }
+
+    case 0x7E: { // LD A, (HL)
+            A = mem.read(hl());
+            break;
+        }
+
+    case 0x7F: // LD A, A
+        break;
 
     case 0xA9: { // XOR C
             A ^= C;
@@ -815,10 +1028,45 @@ void Cpu::step() {
                     break;
             }
 
-            case 0x38: {
-                    // TODO
+            case 0x38: { // SRL B
+                    B = srl(B);
                     break;
                 }
+
+            case 0x39: { // SRL C
+                    C = srl(C);
+                    break;
+                }
+
+            case 0x3A: { // SRL D
+                    D = srl(D);
+                    break;
+                }
+
+            case 0x3B: { // SRL E
+                    E = srl(E);
+                    break;
+                }
+
+            case 0x3C: { // SRL H
+                    H = srl(H);
+                    break;
+                }
+
+            case 0x3D: { // SRL L
+                    L = srl(L);
+                    break;
+                }
+
+            case 0x3E: { // SRL (HL)
+                    mem.write(hl(), srl(mem.read(hl())));
+                    break;
+                }
+
+            case 0x3F: { // SRL A
+                    A = srl(A);
+                    break;
+            }
 
             default: {
                     std::cerr << "Unknown CB opcode 0x" << std::hex

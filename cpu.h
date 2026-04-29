@@ -50,6 +50,7 @@ public:
     void set_hl(uint16_t value);
     [[nodiscard]] uint8_t rr(uint8_t value, bool set_z);
     [[nodiscard]] uint8_t rrc(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t srl(uint8_t value);
 
     // Main loop
     void step();
