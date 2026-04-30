@@ -55,7 +55,7 @@ void Cpu::set_hl(uint16_t value) {
     split(H, L, value);
 }
 
-uint8_t Cpu::rr(uint8_t value, bool set_z) { // helper for the rr operations
+uint8_t Cpu::rr(uint8_t value, bool set_z) { // helper for the 'rr' operations
     uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
     uint8_t saved_bit = value & 1;
     value = value >> 1;
@@ -71,7 +71,7 @@ uint8_t Cpu::rr(uint8_t value, bool set_z) { // helper for the rr operations
     return value;
 }
 
-uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the rrc operations
+uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the 'rrc' operations
     uint8_t saved_bit = value & 1;
     value = value >> 1;
     value |= (saved_bit << 7);
@@ -86,7 +86,7 @@ uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the rrc operations
     return value;
 }
 
-uint8_t Cpu::srl(uint8_t value) { // helper for the srl operations
+uint8_t Cpu::srl(uint8_t value) { // helper for the 'srl' operations
     uint8_t saved_bit = value & 1;
     value = value >> 1;
     set_flag(FLAG_Z, value == 0);
@@ -94,6 +94,45 @@ uint8_t Cpu::srl(uint8_t value) { // helper for the srl operations
     set_flag(FLAG_H, false);
     set_flag(FLAG_C, saved_bit != 0x00);
     return value;
+}
+
+uint8_t Cpu::or_x(uint8_t value) { // helper for the 'or' operation
+    A |= value;
+    set_flag(FLAG_Z, A == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, false);
+    return A;
+}
+
+uint8_t Cpu::xor_x(uint8_t value) { // helper for the 'xor' operation
+    A ^= value;
+    set_flag(FLAG_Z, A == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, false);
+    return A;
+}
+
+uint8_t Cpu::and_x(uint8_t value) { // helper for the 'and' operation
+    A &= value;
+    set_flag(FLAG_Z, A == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, true);
+    set_flag(FLAG_C, false);
+    return A;
+}
+
+uint8_t Cpu::add(uint8_t value) {
+    uint16_t sum = static_cast<uint16_t>(A) + value;
+    bool half_carry = ((A & 0x0F) + (value & 0x0F)) > 0x0F;
+    bool carry = sum > 0xFF;
+    A = A + value;
+    set_flag(FLAG_Z, A == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, half_carry);
+    set_flag(FLAG_C,  carry);
+    return A;
 }
 
 Cpu::Cpu(Memory& memory) : mem(memory) {
@@ -789,93 +828,163 @@ void Cpu::step() {
     case 0x7F: // LD A, A
         break;
 
+    case 0x80: { // ADD A, B
+            A = add(B);
+            break;
+        }
+
+    case 0x81: { // ADD A, C
+            A = add(C);
+            break;
+        }
+
+    case 0x82: { // ADD A, D
+            A = add(D);
+            break;
+        }
+
+    case 0x83: { // ADD A, E
+            A = add(E);
+            break;
+        }
+
+    case 0x84: { // ADD A, H
+            A = add(H);
+            break;
+        }
+
+    case 0x85: { // ADD A, L
+            A = add(L);
+            break;
+        }
+
+    case 0x86: { // ADD A, (HL)
+            A = add(mem.read(hl()));
+            break;
+        }
+
+    case 0x87: { // ADD A, A
+            A = add(A);
+            break;
+    }
+
+    case 0xA0: { // AND B
+            A = and_x(B);
+            break;
+        }
+
+    case 0xA1: { // AND C
+            A = and_x(C);
+            break;
+        }
+
+    case 0xA2: { // AND D
+            A = and_x(D);
+            break;
+        }
+
+    case 0xA3: { // AND E
+            A = and_x(E);
+            break;
+        }
+
+    case 0xA4: { // AND H
+            A = and_x(H);
+            break;
+        }
+
+    case 0xA5: { // AND L
+            A = and_x(L);
+            break;
+        }
+
+    case 0xA6: { // AND (HL)
+            A = and_x(mem.read(hl()));
+            break;
+        }
+
+    case 0xA7: { // AND A
+            A = and_x(A);
+            break;
+        }
+
+    case 0xA8: { // XOR B
+            A = xor_x(B);
+            break;
+        }
+
     case 0xA9: { // XOR C
-            A ^= C;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+            A = xor_x(C);
+            break;
+        }
+
+    case 0xAA: { // XOR D
+            A = xor_x(D);
+            break;
+        }
+
+    case 0xAB: { // XOR E
+            A = xor_x(E);
+            break;
+        }
+
+    case 0xAC: { // XOR H
+            A = xor_x(H);
+            break;
+        }
+
+    case 0xAD: { // XOR L
+            A = xor_x(L);
             break;
         }
 
     case 0xAE: { // XOR (HL)
-            A ^= mem.read(hl());
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+            A = xor_x(mem.read(hl()));
             break;
         }
 
-    case 0xB0: {
-            A |= B;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xAF: { // XOR A
+            A = xor_x(A);
             break;
         }
 
-    case 0xB1: {
-            A |= C;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB0: { // OR B
+            A = or_x(B);
             break;
         }
 
-    case 0xB2: {
-            A |= D;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB1: { // OR C
+            A = or_x(C);
             break;
         }
 
-    case 0xB3: {
-            A |= E;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB2: { // OR D
+            A = or_x(D);
             break;
         }
 
-    case 0xB4: {
-            A |= H;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB3: { // OR E
+            A = or_x(E);
             break;
         }
 
-    case 0xB5: {
-            A |= L;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB4: { // OR H
+            A = or_x(H);
             break;
         }
 
-    case 0xB6: {
-            A |= mem.read(hl());
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB5: { // OR L
+            A = or_x(L);
             break;
         }
 
-    case 0xB7: {
-            A |= A;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, false);
+    case 0xB6: { // OR (HL)
+            A = or_x(mem.read(hl()));
+            break;
+        }
+
+    case 0xB7: { // OR A
+            A = or_x(A);
             break;
         }
 
@@ -922,15 +1031,8 @@ void Cpu::step() {
         }
 
     case 0xC6: { // ADD A, d8
-            uint8_t operand  = mem.read(PC);
-            uint16_t sum = static_cast<uint16_t>(A) + operand;
-            bool half_carry = ((A & 0x0F) + (operand & 0x0F)) > 0x0F;
-            bool carry = sum > 0xFF;
-            A = A + operand;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, half_carry);
-            set_flag(FLAG_C,  carry);
+            uint8_t operand = mem.read(PC);
+            A = add(operand);
             PC++;
             break;
         }
