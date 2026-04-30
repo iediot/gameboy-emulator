@@ -123,15 +123,47 @@ uint8_t Cpu::and_x(uint8_t value) { // helper for the 'and' operation
     return A;
 }
 
-uint8_t Cpu::add(uint8_t value) {
+uint8_t Cpu::add(uint8_t value, bool with_carry) {
+    uint8_t carry_in = (F & FLAG_C) ? 1 : 0;
     uint16_t sum = static_cast<uint16_t>(A) + value;
-    bool half_carry = ((A & 0x0F) + (value & 0x0F)) > 0x0F;
-    bool carry = sum > 0xFF;
-    A = A + value;
+    bool half_carry, carry;
+    if (with_carry) {
+        half_carry = ((A & 0x0F) + (value & 0x0F)
+                        + carry_in) > 0x0F;
+        carry = (sum + carry_in) > 0xFF;
+        A = A + value + carry_in;
+    }
+    else {
+        half_carry = ((A & 0x0F)
+                    + (value & 0x0F)) > 0x0F;
+        carry = sum > 0xFF;
+        A = A + value;
+    }
     set_flag(FLAG_Z, A == 0);
     set_flag(FLAG_N, false);
     set_flag(FLAG_H, half_carry);
-    set_flag(FLAG_C,  carry);
+    set_flag(FLAG_C, carry);
+    return A;
+}
+
+uint8_t Cpu::sub(uint8_t value, bool with_carry) {
+    uint8_t carry_in = (F & FLAG_C) ? 1 : 0;
+    bool half_carry, carry;
+    if (with_carry) {
+        half_carry = (A & 0x0F) <
+                    ((value & 0x0F) + carry_in);
+        carry = A < (value + carry_in);
+        A = A - value - carry_in;
+    }
+    else {
+        half_carry = (A & 0x0F) < (value & 0x0F);
+        carry = A < value;
+        A = A - value;
+    }
+    set_flag(FLAG_Z, A == 0);
+    set_flag(FLAG_N, true);
+    set_flag(FLAG_H, half_carry);
+    set_flag(FLAG_C, carry);
     return A;
 }
 
@@ -829,42 +861,162 @@ void Cpu::step() {
         break;
 
     case 0x80: { // ADD A, B
-            A = add(B);
+            A = add(B, false);
             break;
         }
 
     case 0x81: { // ADD A, C
-            A = add(C);
+            A = add(C, false);
             break;
         }
 
     case 0x82: { // ADD A, D
-            A = add(D);
+            A = add(D, false);
             break;
         }
 
     case 0x83: { // ADD A, E
-            A = add(E);
+            A = add(E, false);
             break;
         }
 
     case 0x84: { // ADD A, H
-            A = add(H);
+            A = add(H, false);
             break;
         }
 
     case 0x85: { // ADD A, L
-            A = add(L);
+            A = add(L, false);
             break;
         }
 
     case 0x86: { // ADD A, (HL)
-            A = add(mem.read(hl()));
+            A = add(mem.read(hl()), false);
             break;
         }
 
     case 0x87: { // ADD A, A
-            A = add(A);
+            A = add(A, false);
+            break;
+    }
+
+    case 0x88: { // ADC A, B
+            A = add(B, true);
+            break;
+    }
+
+    case 0x89: { // ADC A, C
+            A = add(C, true);
+            break;
+    }
+
+    case 0x8A: { // ADC A, D
+            A = add(D, true);
+            break;
+    }
+
+    case 0x8B: { // ADC A, E
+            A = add(E, true);
+            break;
+    }
+
+    case 0x8C: { // ADC A, H
+            A = add(H, true);
+            break;
+    }
+
+    case 0x8D: { // ADC A, L
+            A = add(L, true);
+            break;
+    }
+
+    case 0x8E: { // ADC A, (HL)
+            A = add(mem.read(hl()), true);
+            break;
+    }
+
+    case 0x8F: { // ADC A, A
+            A = add(A, true);
+            break;
+    }
+
+    case 0x90: { // SUB A, B
+            A = sub(B, false);
+            break;
+    }
+
+    case 0x91: { // SUB A, C
+            A = sub(C, false);
+            break;
+    }
+
+    case 0x92: { // SUB A, D
+            A = sub(D, false);
+            break;
+    }
+
+    case 0x93: { // SUB A, E
+            A = sub(E, false);
+            break;
+    }
+
+    case 0x94: { // SUB A, H
+            A = sub(H, false);
+            break;
+    }
+
+    case 0x95: { // SUB A, L
+            A = sub(L, false);
+            break;
+    }
+
+    case 0x96: { // SUB A, (HL)
+            A = sub(mem.read(hl()), false);
+            break;
+    }
+
+    case 0x97: { // SUB A, A
+            A = sub(A, false);
+            break;
+    }
+
+    case 0x98: { // SBC A, B
+            A = sub(B, true);
+            break;
+    }
+
+    case 0x99: { // SBC A, C
+            A = sub(C, true);
+            break;
+    }
+
+    case 0x9A: { // SBC A, D
+            A = sub(D, true);
+            break;
+    }
+
+    case 0x9B: { // SBC A, E
+            A = sub(E, true);
+            break;
+    }
+
+    case 0x9C: { // SBC A, H
+            A = sub(H, true);
+            break;
+    }
+
+    case 0x9D: { // SBC A, L
+            A = sub(L, true);
+            break;
+    }
+
+    case 0x9E: { // SBC A, (HL)
+            A = sub(mem.read(hl()), true);
+            break;
+    }
+
+    case 0x9F: { // SBC A, A
+            A = sub(A, true);
             break;
     }
 
@@ -1032,7 +1184,7 @@ void Cpu::step() {
 
     case 0xC6: { // ADD A, d8
             uint8_t operand = mem.read(PC);
-            A = add(operand);
+            A = add(operand, false);
             PC++;
             break;
         }
@@ -1211,13 +1363,7 @@ void Cpu::step() {
 
     case 0xD6: { // SUB d8
             uint8_t operand  = mem.read(PC);
-            bool half_carry = (A & 0x0F) < (operand & 0x0F);
-            bool carry = A < operand;
-            A = A - operand;
-            set_flag(FLAG_Z, A == 0);
-            set_flag(FLAG_N, true);
-            set_flag(FLAG_H, half_carry);
-            set_flag(FLAG_C,  carry);
+            A = sub(operand, false);
             PC++;
             break;
         }
@@ -1301,12 +1447,12 @@ void Cpu::step() {
             break;
         }
 
-    case 0xFE: {
-            uint8_t d8 = mem.read(PC);
-            set_flag(FLAG_Z, A == d8);
+    case 0xFE: { // CP d8
+            uint8_t operand = mem.read(PC);
+            set_flag(FLAG_Z, A == operand);
             set_flag(FLAG_N, true);
-            set_flag(FLAG_H, (A & 0x0F) < (d8 & 0x0F));
-            set_flag(FLAG_C, A < d8);
+            set_flag(FLAG_H, (A & 0x0F) < (operand & 0x0F));
+            set_flag(FLAG_C, A < operand);
             PC++;
             break;
         }

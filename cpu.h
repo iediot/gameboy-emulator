@@ -54,7 +54,8 @@ public:
     [[nodiscard]] uint8_t or_x(uint8_t value);
     [[nodiscard]] uint8_t xor_x(uint8_t value);
     [[nodiscard]] uint8_t and_x(uint8_t value);
-    [[nodiscard]] uint8_t add(uint8_t value);
+    [[nodiscard]] uint8_t add(uint8_t value, bool with_carry);
+    [[nodiscard]] uint8_t sub(uint8_t value, bool with_carry);
 
     // Main loop
     void step();
