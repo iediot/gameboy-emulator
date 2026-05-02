@@ -585,7 +585,7 @@ void Cpu::step() {
             A--;
             set_flag(FLAG_Z, A == 0);
             set_flag(FLAG_N, true);
-            set_flag(FLAG_H, (A & 0x0F) == 0x00);
+            set_flag(FLAG_H, (A & 0x0F) == 0x0F);
             break;
         }
 
@@ -1223,7 +1223,7 @@ void Cpu::step() {
         }
 
     case 0xC0: { // RET NZ
-            if (!(F & FLAG_C))
+            if (!(F & FLAG_Z))
                 ret();
             break;
         }
