@@ -123,9 +123,9 @@ uint8_t Cpu::and_x(uint8_t value) { // helper for the 'and' operation
     return A;
 }
 
-uint8_t Cpu::add(uint8_t value, bool with_carry) {
-    uint8_t carry_in = (F & FLAG_C) ? 1 : 0;
-    uint16_t sum = static_cast<uint16_t>(A) + value;
+uint8_t Cpu::add(uint8_t value, bool with_carry) {   // helper for the 'add' function
+    uint8_t carry_in = (F & FLAG_C) ? 1 : 0;         // and also works for the 'adc'
+    uint16_t sum = static_cast<uint16_t>(A) + value; // - add with carry
     bool half_carry, carry;
     if (with_carry) {
         half_carry = ((A & 0x0F) + (value & 0x0F)
@@ -146,9 +146,9 @@ uint8_t Cpu::add(uint8_t value, bool with_carry) {
     return A;
 }
 
-uint8_t Cpu::sub(uint8_t value, bool with_carry) {
-    uint8_t carry_in = (F & FLAG_C) ? 1 : 0;
-    bool half_carry, carry;
+uint8_t Cpu::sub(uint8_t value, bool with_carry) {  // helper for the 'sub' function
+    uint8_t carry_in = (F & FLAG_C) ? 1 : 0;        // and also works for the 'sbc'
+    bool half_carry, carry;                         // - subtract with carry
     if (with_carry) {
         half_carry = (A & 0x0F) <
                     ((value & 0x0F) + carry_in);
@@ -165,6 +165,21 @@ uint8_t Cpu::sub(uint8_t value, bool with_carry) {
     set_flag(FLAG_H, half_carry);
     set_flag(FLAG_C, carry);
     return A;
+}
+
+void Cpu::cp(uint8_t value) {      // helper for the 'cp' operation
+    set_flag(FLAG_Z, A == value);  // - compare
+    set_flag(FLAG_N, true);
+    set_flag(FLAG_H, (A & 0x0F) < (value & 0x0F));
+    set_flag(FLAG_C, A < value);
+}
+
+void Cpu::ret() {
+    uint8_t low = mem.read(SP);
+    SP++;
+    uint8_t high = mem.read(SP);
+    SP++;
+    PC = combine(high, low);
 }
 
 Cpu::Cpu(Memory& memory) : mem(memory) {
@@ -468,6 +483,17 @@ void Cpu::step() {
             break;
         }
 
+    case 0x29: { // ADD HL, HL
+            uint32_t sum = static_cast<uint32_t>(hl()) + hl();
+            bool carry = sum > 0xFFFF;
+            bool half_carry = ((hl() & 0x0FFF) + (hl() & 0x0FFF)) > 0x0FFF;
+            set_hl(hl() + hl());
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, half_carry);
+            set_flag(FLAG_C, carry);
+            break;
+        }
+
     case 0x2A: { // LD A, (HL+)
             A = mem.read(hl());
             set_hl(hl() + 1);
@@ -544,6 +570,22 @@ void Cpu::step() {
             if (F & FLAG_C) {
                 PC += offset;
             }
+            break;
+        }
+
+    case 0x3C: { // INC A
+            A++;
+            set_flag(FLAG_Z, A == 0);
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, (A & 0x0F) == 0x00);
+            break;
+        }
+
+    case 0x3D: { // DEC A
+            A--;
+            set_flag(FLAG_Z, A == 0);
+            set_flag(FLAG_N, true);
+            set_flag(FLAG_H, (A & 0x0F) == 0x00);
             break;
         }
 
@@ -1020,123 +1062,169 @@ void Cpu::step() {
             break;
     }
 
-    case 0xA0: { // AND B
+    case 0xA0: { // AND A, B
             A = and_x(B);
             break;
         }
 
-    case 0xA1: { // AND C
+    case 0xA1: { // AND A, C
             A = and_x(C);
             break;
         }
 
-    case 0xA2: { // AND D
+    case 0xA2: { // AND A, D
             A = and_x(D);
             break;
         }
 
-    case 0xA3: { // AND E
+    case 0xA3: { // AND A, E
             A = and_x(E);
             break;
         }
 
-    case 0xA4: { // AND H
+    case 0xA4: { // AND A, H
             A = and_x(H);
             break;
         }
 
-    case 0xA5: { // AND L
+    case 0xA5: { // AND A, L
             A = and_x(L);
             break;
         }
 
-    case 0xA6: { // AND (HL)
+    case 0xA6: { // AND A, (HL)
             A = and_x(mem.read(hl()));
             break;
         }
 
-    case 0xA7: { // AND A
+    case 0xA7: { // AND A, A
             A = and_x(A);
             break;
         }
 
-    case 0xA8: { // XOR B
+    case 0xA8: { // XOR A, B
             A = xor_x(B);
             break;
         }
 
-    case 0xA9: { // XOR C
+    case 0xA9: { // XOR A, C
             A = xor_x(C);
             break;
         }
 
-    case 0xAA: { // XOR D
+    case 0xAA: { // XOR A, D
             A = xor_x(D);
             break;
         }
 
-    case 0xAB: { // XOR E
+    case 0xAB: { // XOR A, E
             A = xor_x(E);
             break;
         }
 
-    case 0xAC: { // XOR H
+    case 0xAC: { // XOR A, H
             A = xor_x(H);
             break;
         }
 
-    case 0xAD: { // XOR L
+    case 0xAD: { // XOR A, L
             A = xor_x(L);
             break;
         }
 
-    case 0xAE: { // XOR (HL)
+    case 0xAE: { // XOR A, (HL)
             A = xor_x(mem.read(hl()));
             break;
         }
 
-    case 0xAF: { // XOR A
+    case 0xAF: { // XOR A, A
             A = xor_x(A);
             break;
         }
 
-    case 0xB0: { // OR B
+    case 0xB0: { // OR A, B
             A = or_x(B);
             break;
         }
 
-    case 0xB1: { // OR C
+    case 0xB1: { // OR A, C
             A = or_x(C);
             break;
         }
 
-    case 0xB2: { // OR D
+    case 0xB2: { // OR A, D
             A = or_x(D);
             break;
         }
 
-    case 0xB3: { // OR E
+    case 0xB3: { // OR A, E
             A = or_x(E);
             break;
         }
 
-    case 0xB4: { // OR H
+    case 0xB4: { // OR A, H
             A = or_x(H);
             break;
         }
 
-    case 0xB5: { // OR L
+    case 0xB5: { // OR A, L
             A = or_x(L);
             break;
         }
 
-    case 0xB6: { // OR (HL)
+    case 0xB6: { // OR A, (HL)
             A = or_x(mem.read(hl()));
             break;
         }
 
-    case 0xB7: { // OR A
+    case 0xB7: { // OR A, A
             A = or_x(A);
+            break;
+        }
+
+    case 0xB8: { // CP A, B
+            cp(B);
+            break;
+        }
+
+    case 0xB9: { // CP A, C
+            cp(C);
+            break;
+        }
+
+    case 0xBA: { // CP A, D
+            cp(D);
+            break;
+        }
+
+    case 0xBB: { // CP A, E
+            cp(E);
+            break;
+        }
+
+    case 0xBC: { // CP A, H
+            cp(H);
+            break;
+        }
+
+    case 0xBD: { // CP A, L
+            cp(L);
+            break;
+        }
+
+    case 0xBE: { // CP A, (HL)
+            cp(mem.read(hl()));
+            break;
+        }
+
+    case 0xBF: { // CP A, A
+            cp(A);
+            break;
+        }
+
+    case 0xC0: { // RET NZ
+            if (!(F & FLAG_C))
+                ret();
             break;
         }
 
@@ -1189,12 +1277,14 @@ void Cpu::step() {
             break;
         }
 
-    case 0xC9: {
-            uint8_t low = mem.read(SP);
-            SP++;
-            uint8_t high = mem.read(SP);
-            SP++;
-            PC = combine(high, low);
+    case 0xC8: { // RET Z
+            if (F & FLAG_Z)
+                ret();
+            break;
+        }
+
+    case 0xC9: { // RET
+            ret();
             break;
         }
 
@@ -1343,6 +1433,19 @@ void Cpu::step() {
             break;
         }
 
+    case 0xCE: { // ADC A, d8
+            uint8_t operand = mem.read(PC);
+            A = add(operand, true);
+            PC++;
+            break;
+        }
+
+    case 0xD0: { // RET NC
+            if (!(F & FLAG_C))
+                ret();
+            break;
+        }
+
     case 0xD1: {
             uint8_t low = mem.read(SP);
             SP++;
@@ -1361,9 +1464,22 @@ void Cpu::step() {
             break;
         }
 
-    case 0xD6: { // SUB d8
+    case 0xD6: { // SUB A, d8
             uint8_t operand  = mem.read(PC);
             A = sub(operand, false);
+            PC++;
+            break;
+        }
+
+    case 0xD8: { // RET C
+            if (F & FLAG_C)
+                ret();
+            break;
+        }
+
+    case 0xDE: { // SBC A, d8
+            uint8_t operand  = mem.read(PC);
+            A = sub(operand, true);
             PC++;
             break;
         }
@@ -1392,12 +1508,9 @@ void Cpu::step() {
             break;
         }
 
-    case 0xE6: {
-            A = A & mem.read(PC);
-            set_flag(FLAG_Z, A == 0x00);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, true);
-            set_flag(FLAG_C, false);
+    case 0xE6: { // AND A, d8
+            uint8_t operand = mem.read(PC);
+            A = and_x(operand);
             PC++;
             break;
         }
@@ -1407,6 +1520,13 @@ void Cpu::step() {
             uint8_t high = mem.read(PC + 1);
             mem.write(combine(high, low), A);
             PC += 2;
+            break;
+        }
+
+    case 0xEE: { // XOR A, d8
+            uint8_t operand = mem.read(PC);
+            A = xor_x(operand);
+            PC++;
             break;
         }
 
@@ -1439,6 +1559,13 @@ void Cpu::step() {
             break;
         }
 
+    case 0xF6: { // OR A, d8
+            uint8_t operand = mem.read(PC);
+            A = or_x(operand);
+            PC++;
+            break;
+        }
+
     case 0xFA: {
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
@@ -1449,10 +1576,7 @@ void Cpu::step() {
 
     case 0xFE: { // CP d8
             uint8_t operand = mem.read(PC);
-            set_flag(FLAG_Z, A == operand);
-            set_flag(FLAG_N, true);
-            set_flag(FLAG_H, (A & 0x0F) < (operand & 0x0F));
-            set_flag(FLAG_C, A < operand);
+            cp(operand);
             PC++;
             break;
         }

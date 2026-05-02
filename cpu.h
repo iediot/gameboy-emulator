@@ -56,6 +56,8 @@ public:
     [[nodiscard]] uint8_t and_x(uint8_t value);
     [[nodiscard]] uint8_t add(uint8_t value, bool with_carry);
     [[nodiscard]] uint8_t sub(uint8_t value, bool with_carry);
+    void cp(uint8_t value);
+    void ret();
 
     // Main loop
     void step();
