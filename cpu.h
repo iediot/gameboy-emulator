@@ -60,6 +60,9 @@ public:
     [[nodiscard]] uint8_t sub(uint8_t value, bool with_carry);
     void cp(uint8_t value);
     void ret();
+    void rst(uint16_t address);
+    void call();
+    [[nodiscard]] uint8_t swap (uint8_t value);
 
     // Main loop
     void step();
