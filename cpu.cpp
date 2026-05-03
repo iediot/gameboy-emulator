@@ -71,10 +71,41 @@ uint8_t Cpu::rr(uint8_t value, bool set_z) { // helper for the 'rr' operations
     return value;
 }
 
+uint8_t Cpu::rl(uint8_t value, bool set_z) {
+    uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
+    uint8_t saved_bit = (value >> 7) & 1;
+    value = value << 1;
+    value |= old_carry;
+    if (set_z) {
+        set_flag(FLAG_Z, value == 0);
+    } else {
+        set_flag(FLAG_Z, false);
+    }
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, saved_bit != 0x00);
+    return value;
+}
+
 uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the 'rrc' operations
     uint8_t saved_bit = value & 1;
     value = value >> 1;
     value |= (saved_bit << 7);
+    if (set_z) {
+        set_flag(FLAG_Z, value == 0);
+    } else {
+        set_flag(FLAG_Z, false);
+    }
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, saved_bit != 0x00);
+    return value;
+}
+
+uint8_t Cpu::rlc(uint8_t value, bool set_z) {
+    uint8_t saved_bit = (value >> 7) & 1;
+    value = value << 1;
+    value |= saved_bit;
     if (set_z) {
         set_flag(FLAG_Z, value == 0);
     } else {
@@ -125,7 +156,7 @@ uint8_t Cpu::and_x(uint8_t value) { // helper for the 'and' operation
 
 uint8_t Cpu::add(uint8_t value, bool with_carry) {   // helper for the 'add' function
     uint8_t carry_in = (F & FLAG_C) ? 1 : 0;         // and also works for the 'adc'
-    uint16_t sum = static_cast<uint16_t>(A) + value; // - add with carry
+    uint16_t sum = static_cast<uint16_t>(A) + value; // (add with carry)
     bool half_carry, carry;
     if (with_carry) {
         half_carry = ((A & 0x0F) + (value & 0x0F)
@@ -148,7 +179,7 @@ uint8_t Cpu::add(uint8_t value, bool with_carry) {   // helper for the 'add' fun
 
 uint8_t Cpu::sub(uint8_t value, bool with_carry) {  // helper for the 'sub' function
     uint8_t carry_in = (F & FLAG_C) ? 1 : 0;        // and also works for the 'sbc'
-    bool half_carry, carry;                         // - subtract with carry
+    bool half_carry, carry;                         // (subtract with carry)
     if (with_carry) {
         half_carry = (A & 0x0F) <
                     ((value & 0x0F) + carry_in);
@@ -167,14 +198,14 @@ uint8_t Cpu::sub(uint8_t value, bool with_carry) {  // helper for the 'sub' func
     return A;
 }
 
-void Cpu::cp(uint8_t value) {      // helper for the 'cp' operation
-    set_flag(FLAG_Z, A == value);  // - compare
+void Cpu::cp(uint8_t value) {      // helper for the 'cp' (compare) operation
+    set_flag(FLAG_Z, A == value);
     set_flag(FLAG_N, true);
     set_flag(FLAG_H, (A & 0x0F) < (value & 0x0F));
     set_flag(FLAG_C, A < value);
 }
 
-void Cpu::ret() {
+void Cpu::ret() {           // helper for 'ret' operation
     uint8_t low = mem.read(SP);
     SP++;
     uint8_t high = mem.read(SP);
@@ -244,13 +275,7 @@ void Cpu::step() {
         }
 
     case 0x07: { // RLCA
-            uint8_t saved_bit = (A >> 7) & 1;
-            A = A << 1;
-            A |= saved_bit;
-            set_flag(FLAG_Z, false);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, saved_bit != 0x00);
+            A = rlc(A, false);
             break;
         }
 
@@ -359,14 +384,7 @@ void Cpu::step() {
         }
 
     case 0x17: { // RLA
-            uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
-            uint8_t saved_bit = (A >> 7) & 1;
-            A = A << 1;
-            A |= old_carry;
-            set_flag(FLAG_Z, false);
-            set_flag(FLAG_N, false);
-            set_flag(FLAG_H, false);
-            set_flag(FLAG_C, saved_bit != 0x00);
+            A = rl(A, false);
             break;
         }
 
@@ -474,6 +492,11 @@ void Cpu::step() {
             break;
         }
 
+    case 0x27: { // DAA
+            // TODO: <-
+            break;
+        }
+
     case 0x28: { // JR Z, s8
             int8_t offset = static_cast<int8_t>(mem.read(PC));
             PC++;
@@ -500,6 +523,11 @@ void Cpu::step() {
             break;
         }
 
+    case 0x2B: { // DEC HL
+            set_hl(hl() - 1);
+            break;
+        }
+
     case 0x2C: { // INC L
             L++;
             set_flag(FLAG_Z, L == 0);
@@ -513,6 +541,17 @@ void Cpu::step() {
             set_flag(FLAG_Z, L == 0);
             set_flag(FLAG_N, true);
             set_flag(FLAG_H, (L & 0x0F) == 0x0F);
+            break;
+        }
+
+    case 0x2E: { // LD L, d8
+            L = mem.read(PC);
+            PC++;
+            break;
+        }
+
+    case 0x2F: { // CPL
+            // TODO: <-
             break;
         }
 
@@ -564,12 +603,45 @@ void Cpu::step() {
             break;
         }
 
+    case 0x36: { // LD (HL), d8
+            mem.write(hl(), mem.read(PC));
+            PC++;
+            break;
+        }
+
+    case 0x37: { // SCF
+            // TODO: <-
+            break;
+        }
+
     case 0x38: { // JR C, s8
             int8_t offset = static_cast<int8_t>(mem.read(PC));
             PC++;
             if (F & FLAG_C) {
                 PC += offset;
             }
+            break;
+        }
+
+    case 0x39: { // ADD HL, SP
+            uint32_t sum = static_cast<uint32_t>(hl()) + SP;
+            bool carry = sum > 0xFFFF;
+            bool half_carry = ((hl() & 0x0FFF) + (SP & 0x0FFF)) > 0x0FFF;
+            set_hl(hl() + SP);
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, half_carry);
+            set_flag(FLAG_C, carry);
+            break;
+        }
+
+    case 0x3A: { // LD A, (HL-)
+            A = mem.read(hl());
+            set_hl(hl() - 1);
+            break;
+        }
+
+    case 0x3B: { // DEC SP
+            SP--;
             break;
         }
 
@@ -592,6 +664,11 @@ void Cpu::step() {
     case 0x3E: { // LD A, d8
             A = mem.read(PC);
             PC++;
+            break;
+        }
+
+    case 0x3F: {
+            // TODO: <-
             break;
         }
 

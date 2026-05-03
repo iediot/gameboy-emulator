@@ -49,7 +49,9 @@ public:
     [[nodiscard]] uint16_t hl() const;
     void set_hl(uint16_t value);
     [[nodiscard]] uint8_t rr(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t rl(uint8_t value, bool set_z);
     [[nodiscard]] uint8_t rrc(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t rlc(uint8_t value, bool set_z);
     [[nodiscard]] uint8_t srl(uint8_t value);
     [[nodiscard]] uint8_t or_x(uint8_t value);
     [[nodiscard]] uint8_t xor_x(uint8_t value);
