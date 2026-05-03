@@ -1305,7 +1305,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xC1: {
+    case 0xC1: { // POP BC
             uint8_t low = mem.read(SP);
             SP++;
             uint8_t high = mem.read(SP);
@@ -1314,14 +1314,14 @@ void Cpu::step() {
             break;
         }
 
-    case 0xC3: {
+    case 0xC3: { // JP a16
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             PC = combine(high, low);
             break;
         }
 
-    case 0xC4: {
+    case 0xC4: { // CALL NZ, a16
             if (!(F & FLAG_Z))
             {
                 uint8_t low = mem.read(PC);
@@ -1338,7 +1338,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xC5: {
+    case 0xC5: { // PUSH BC
             uint8_t low = bc();
             uint8_t high = bc() >> 8;
             mem.write(SP - 1, high);
@@ -1498,7 +1498,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xCD: {
+    case 0xCD: { // CALL a16
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             PC += 2;
@@ -1523,7 +1523,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xD1: {
+    case 0xD1: { // POP DE
             uint8_t low = mem.read(SP);
             SP++;
             uint8_t high = mem.read(SP);
@@ -1532,7 +1532,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xD5: {
+    case 0xD5: { // PUSH DE
             uint8_t low = de();
             uint8_t high = de() >> 8;
             mem.write(SP - 1, high);
@@ -1561,13 +1561,13 @@ void Cpu::step() {
             break;
         }
 
-    case 0xE0: {
+    case 0xE0: { // LD (a8), A
             mem.write(0xFF00 + mem.read(PC), A);
             PC++;
             break;
         }
 
-    case 0xE1: {
+    case 0xE1: { // POP HL
             uint8_t low = mem.read(SP);
             SP++;
             uint8_t high = mem.read(SP);
@@ -1576,7 +1576,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xE5: {
+    case 0xE5: { // PUSH HL
             uint8_t low = hl();
             uint8_t high = hl() >> 8;
             mem.write(SP - 1, high);
@@ -1592,7 +1592,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xEA: {
+    case 0xEA: { // LD (a16), A
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             mem.write(combine(high, low), A);
@@ -1607,13 +1607,13 @@ void Cpu::step() {
             break;
         }
 
-    case 0xF0: {
+    case 0xF0: { // LD A, (a8)
             A = mem.read(0xFF00 + mem.read(PC));
             PC++;
             break;
         }
 
-    case 0xF1: {
+    case 0xF1: { // POP AF
             uint8_t low = mem.read(SP);
             SP++;
             uint8_t high = mem.read(SP);
@@ -1622,12 +1622,12 @@ void Cpu::step() {
             break;
         }
 
-    case 0xF3: {
+    case 0xF3: { // DI
             IME = false;
             break;
         }
 
-    case 0xF5: {
+    case 0xF5: { // PUSH AF
             uint8_t low = af();
             uint8_t high = af() >> 8;
             mem.write(SP - 1, high);
@@ -1643,7 +1643,7 @@ void Cpu::step() {
             break;
         }
 
-    case 0xFA: {
+    case 0xFA: { // LD A, (a16)
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             A = mem.read(combine(high, low));
