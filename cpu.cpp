@@ -55,78 +55,6 @@ void Cpu::set_hl(uint16_t value) {
     split(H, L, value);
 }
 
-uint8_t Cpu::rr(uint8_t value, bool set_z) { // helper for the 'rr' operations
-    uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
-    uint8_t saved_bit = value & 1;
-    value = value >> 1;
-    value |= (old_carry << 7);
-    if (set_z) {
-        set_flag(FLAG_Z, value == 0);
-    } else {
-        set_flag(FLAG_Z, false);
-    }
-    set_flag(FLAG_N, false);
-    set_flag(FLAG_H, false);
-    set_flag(FLAG_C, saved_bit != 0x00);
-    return value;
-}
-
-uint8_t Cpu::rl(uint8_t value, bool set_z) {
-    uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
-    uint8_t saved_bit = (value >> 7) & 1;
-    value = value << 1;
-    value |= old_carry;
-    if (set_z) {
-        set_flag(FLAG_Z, value == 0);
-    } else {
-        set_flag(FLAG_Z, false);
-    }
-    set_flag(FLAG_N, false);
-    set_flag(FLAG_H, false);
-    set_flag(FLAG_C, saved_bit != 0x00);
-    return value;
-}
-
-uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the 'rrc' operations
-    uint8_t saved_bit = value & 1;
-    value = value >> 1;
-    value |= (saved_bit << 7);
-    if (set_z) {
-        set_flag(FLAG_Z, value == 0);
-    } else {
-        set_flag(FLAG_Z, false);
-    }
-    set_flag(FLAG_N, false);
-    set_flag(FLAG_H, false);
-    set_flag(FLAG_C, saved_bit != 0x00);
-    return value;
-}
-
-uint8_t Cpu::rlc(uint8_t value, bool set_z) {
-    uint8_t saved_bit = (value >> 7) & 1;
-    value = value << 1;
-    value |= saved_bit;
-    if (set_z) {
-        set_flag(FLAG_Z, value == 0);
-    } else {
-        set_flag(FLAG_Z, false);
-    }
-    set_flag(FLAG_N, false);
-    set_flag(FLAG_H, false);
-    set_flag(FLAG_C, saved_bit != 0x00);
-    return value;
-}
-
-uint8_t Cpu::srl(uint8_t value) { // helper for the 'srl' operations
-    uint8_t saved_bit = value & 1;
-    value = value >> 1;
-    set_flag(FLAG_Z, value == 0);
-    set_flag(FLAG_N, false);
-    set_flag(FLAG_H, false);
-    set_flag(FLAG_C, saved_bit != 0x00);
-    return value;
-}
-
 uint8_t Cpu::or_x(uint8_t value) { // helper for the 'or' operation
     A |= value;
     set_flag(FLAG_Z, A == 0);
@@ -239,6 +167,114 @@ uint8_t Cpu::swap (uint8_t value) {
     set_flag(FLAG_H, false);
     set_flag(FLAG_C, false);
     return value;
+}
+
+uint8_t Cpu::rr(uint8_t value, bool set_z) { // helper for the 'rr' operations
+    uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
+    uint8_t bit_0 = value & 1;
+    value = value >> 1;
+    value |= (old_carry << 7);
+    if (set_z) {
+        set_flag(FLAG_Z, value == 0);
+    } else {
+        set_flag(FLAG_Z, false);
+    }
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_0 != 0x00);
+    return value;
+}
+
+uint8_t Cpu::rl(uint8_t value, bool set_z) {
+    uint8_t old_carry = (F & FLAG_C) ? 1 : 0;
+    uint8_t bit_7 = (value >> 7) & 1;
+    value = value << 1;
+    value |= old_carry;
+    if (set_z) {
+        set_flag(FLAG_Z, value == 0);
+    } else {
+        set_flag(FLAG_Z, false);
+    }
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_7 != 0x00);
+    return value;
+}
+
+uint8_t Cpu::rrc(uint8_t value, bool set_z) { // helper for the 'rrc' operations
+    uint8_t bit_0 = value & 1;
+    value = value >> 1;
+    value |= (bit_0 << 7);
+    if (set_z) {
+        set_flag(FLAG_Z, value == 0);
+    } else {
+        set_flag(FLAG_Z, false);
+    }
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_0 != 0x00);
+    return value;
+}
+
+uint8_t Cpu::rlc(uint8_t value, bool set_z) {
+    uint8_t bit_7 = (value >> 7) & 1;
+    value = value << 1;
+    value |= bit_7;
+    if (set_z) {
+        set_flag(FLAG_Z, value == 0);
+    } else {
+        set_flag(FLAG_Z, false);
+    }
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_7 != 0x00);
+    return value;
+}
+
+uint8_t Cpu::srl(uint8_t value) { // helper for the 'srl' operations
+    uint8_t bit_0 = value & 1;
+    value = value >> 1;
+    set_flag(FLAG_Z, value == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_0 != 0x00);
+    return value;
+}
+
+uint8_t Cpu::sla(uint8_t value) { // helper for the 'sla' operations
+    uint8_t bit_7 = (value >> 7) & 1;
+    value = value << 1;
+    set_flag(FLAG_Z, value == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_7 != 0x00);
+    return value;
+}
+
+uint8_t Cpu::sra(uint8_t value) { // helper for the 'sra' operations
+    uint8_t bit_0 = value & 1;
+    uint8_t bit_7 = value & 0x80;
+    value = value >> 1;
+    value |= bit_7;
+    set_flag(FLAG_Z, value == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, false);
+    set_flag(FLAG_C, bit_0 != 0x00);
+    return value;
+}
+
+void Cpu::bit(uint8_t bit_position, uint8_t value) {
+    set_flag(FLAG_Z, (value & (1 << bit_position)) == 0);
+    set_flag(FLAG_N, false);
+    set_flag(FLAG_H, true);
+}
+
+uint8_t Cpu::res(uint8_t bit_position, uint8_t value) {
+    return value & ~(1 << bit_position);
+}
+
+uint8_t Cpu::set_bit(uint8_t bit_position, uint8_t value) {
+    return value | (1 << bit_position);
 }
 
 Cpu::Cpu(Memory& memory) : mem(memory) {
@@ -1594,6 +1630,86 @@ void Cpu::step() {
                     break;
                 }
 
+            case 0x20: { // SLA B
+                    B = sla(B);
+                    break;
+                }
+
+            case 0x21: { // SLA C
+                    C = sla(C);
+                    break;
+                }
+
+            case 0x22: { // SLA D
+                    D = sla(D);
+                    break;
+                }
+
+            case 0x23: { // SLA E
+                    E = sla(E);
+                    break;
+                }
+
+            case 0x24: { // SLA H
+                    H = sla(H);
+                    break;
+                }
+
+            case 0x25: { // SLA L
+                    L = sla(L);
+                    break;
+                }
+
+            case 0x26: { // SLA (HL)
+                    mem.write(hl(), sla(mem.read(hl())));
+                    break;
+                }
+
+            case 0x27: { // SLA A
+                    A = sla(A);
+                    break;
+                }
+
+            case 0x28: { // SRA B
+                    B = sra(B);
+                    break;
+                }
+
+            case 0x29: { // SRA C
+                    C = sra(C);
+                    break;
+                }
+
+            case 0x2A: { // SRA D
+                    D = sra(D);
+                    break;
+                }
+
+            case 0x2B: { // SRA E
+                    E = sra(E);
+                    break;
+                }
+
+            case 0x2C: { // SRA H
+                    H = sra(H);
+                    break;
+                }
+
+            case 0x2D: { // SRA L
+                    L = sra(L);
+                    break;
+                }
+
+            case 0x2E: { // SRA (HL)
+                    mem.write(hl(), sra(mem.read(hl())));
+                    break;
+                }
+
+            case 0x2F: { // SRA A
+                    A = sra(A);
+                    break;
+                }
+
             case 0x30: { // SWAP B
                     B = swap(B);
                     break;
@@ -1673,6 +1789,329 @@ void Cpu::step() {
                     A = srl(A);
                     break;
             }
+
+            case 0x40: { // BIT 0, B
+                    bit(0, B);
+                    break;
+                }
+
+            case 0x41: { // BIT 0, C
+                    bit(0, C);
+                    break;
+                }
+
+            case 0x42: { // BIT 0, D
+                    bit(0, D);
+                    break;
+                }
+
+            case 0x43: { // BIT 0, E
+                    bit(0, E);
+                    break;
+                }
+
+            case 0x44: { // BIT 0, H
+                    bit(0, H);
+                    break;
+                }
+
+            case 0x45: { // BIT 0, L
+                    bit(0, L);
+                    break;
+                }
+
+            case 0x46: { // BIT 0, (HL)
+                    bit(0, mem.read(hl()));
+                    break;
+                }
+
+            case 0x47: { // BIT 0, A
+                    bit(0, A);
+                    break;
+                }
+
+            case 0x48: { // BIT 1, B
+                    bit(1, B);
+                    break;
+                }
+
+            case 0x49: { // BIT 1, C
+                    bit(1, C);
+                    break;
+                }
+
+            case 0x4A: { // BIT 1, D
+                    bit(1, D);
+                    break;
+                }
+
+            case 0x4B: { // BIT 1, E
+                    bit(1, E);
+                    break;
+                }
+
+            case 0x4C: { // BIT 1, H
+                    bit(1, H);
+                    break;
+                }
+
+            case 0x4D: { // BIT 1, L
+                    bit(1, L);
+                    break;
+                }
+
+            case 0x4E: { // BIT 1, (HL)
+                    bit(1, mem.read(hl()));
+                    break;
+                }
+
+            case 0x4F: { // BIT 1, A
+                    bit(1, A);
+                    break;
+                }
+
+
+            case 0x50: { // BIT 2, B
+                    bit(2, B);
+                    break;
+                }
+
+            case 0x51: { // BIT 2, C
+                    bit(2, C);
+                    break;
+                }
+
+            case 0x52: { // BIT 2, D
+                    bit(2, D);
+                    break;
+                }
+
+            case 0x53: { // BIT 2, E
+                    bit(2, E);
+                    break;
+                }
+
+            case 0x54: { // BIT 2, H
+                    bit(2, H);
+                    break;
+                }
+
+            case 0x55: { // BIT 2, L
+                    bit(2, L);
+                    break;
+                }
+
+            case 0x56: { // BIT 2, (HL)
+                    bit(2, mem.read(hl()));
+                    break;
+                }
+
+            case 0x57: { // BIT 2, A
+                    bit(2, A);
+                    break;
+                }
+
+            case 0x58: { // BIT 3, B
+                    bit(3, B);
+                    break;
+                }
+
+            case 0x59: { // BIT 3, C
+                    bit(3, C);
+                    break;
+                }
+
+            case 0x5A: { // BIT 3, D
+                    bit(3, D);
+                    break;
+                }
+
+            case 0x5B: { // BIT 3, E
+                    bit(3, E);
+                    break;
+                }
+
+            case 0x5C: { // BIT 3, H
+                    bit(3, H);
+                    break;
+                }
+
+            case 0x5D: { // BIT 3, L
+                    bit(3, L);
+                    break;
+                }
+
+            case 0x5E: { // BIT 3, (HL)
+                    bit(3, mem.read(hl()));
+                    break;
+                }
+
+            case 0x5F: { // BIT 3, A
+                    bit(3, A);
+                    break;
+                }
+
+
+            case 0x60: { // BIT 4, B
+                    bit(4, B);
+                    break;
+                }
+
+            case 0x61: { // BIT 4, C
+                    bit(4, C);
+                    break;
+                }
+
+            case 0x62: { // BIT 4, D
+                    bit(4, D);
+                    break;
+                }
+
+            case 0x63: { // BIT 4, E
+                    bit(4, E);
+                    break;
+                }
+
+            case 0x64: { // BIT 4, H
+                    bit(4, H);
+                    break;
+                }
+
+            case 0x65: { // BIT 4, L
+                    bit(4, L);
+                    break;
+                }
+
+            case 0x66: { // BIT 4, (HL)
+                    bit(4, mem.read(hl()));
+                    break;
+                }
+
+            case 0x67: { // BIT 4, A
+                    bit(4, A);
+                    break;
+                }
+
+            case 0x68: { // BIT 5, B
+                    bit(5, B);
+                    break;
+                }
+
+            case 0x69: { // BIT 5, C
+                    bit(5, C);
+                    break;
+                }
+
+            case 0x6A: { // BIT 5, D
+                    bit(5, D);
+                    break;
+                }
+
+            case 0x6B: { // BIT 5, E
+                    bit(5, E);
+                    break;
+                }
+
+            case 0x6C: { // BIT 5, H
+                    bit(5, H);
+                    break;
+                }
+
+            case 0x6D: { // BIT 5, L
+                    bit(5, L);
+                    break;
+                }
+
+            case 0x6E: { // BIT 5, (HL)
+                    bit(5, mem.read(hl()));
+                    break;
+                }
+
+            case 0x6F: { // BIT 5, A
+                    bit(5, A);
+                    break;
+                }
+
+
+            case 0x70: { // BIT 6, B
+                    bit(6, B);
+                    break;
+                }
+
+            case 0x71: { // BIT 6, C
+                    bit(6, C);
+                    break;
+                }
+
+            case 0x72: { // BIT 6, D
+                    bit(6, D);
+                    break;
+                }
+
+            case 0x73: { // BIT 6, E
+                    bit(6, E);
+                    break;
+                }
+
+            case 0x74: { // BIT 6, H
+                    bit(6, H);
+                    break;
+                }
+
+            case 0x75: { // BIT 6, L
+                    bit(6, L);
+                    break;
+                }
+
+            case 0x76: { // BIT 6, (HL)
+                    bit(6, mem.read(hl()));
+                    break;
+                }
+
+            case 0x77: { // BIT 6, A
+                    bit(6, A);
+                    break;
+                }
+
+            case 0x78: { // BIT 7, B
+                    bit(7, B);
+                    break;
+                }
+
+            case 0x79: { // BIT 7, C
+                    bit(7, C);
+                    break;
+                }
+
+            case 0x7A: { // BIT 7, D
+                    bit(7, D);
+                    break;
+                }
+
+            case 0x7B: { // BIT 7, E
+                    bit(7, E);
+                    break;
+                }
+
+            case 0x7C: { // BIT 7, H
+                    bit(7, H);
+                    break;
+                }
+
+            case 0x7D: { // BIT 7, L
+                    bit(7, L);
+                    break;
+                }
+
+            case 0x7E: { // BIT 7, (HL)
+                    bit(7, mem.read(hl()));
+                    break;
+                }
+
+            case 0x7F: { // BIT 7, A
+                    bit(7, A);
+                    break;
+                }
 
             default: {
                     std::cerr << "Unknown CB opcode 0x" << std::hex

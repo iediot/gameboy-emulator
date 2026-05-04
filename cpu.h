@@ -48,11 +48,6 @@ public:
     void set_de(uint16_t value);
     [[nodiscard]] uint16_t hl() const;
     void set_hl(uint16_t value);
-    [[nodiscard]] uint8_t rr(uint8_t value, bool set_z);
-    [[nodiscard]] uint8_t rl(uint8_t value, bool set_z);
-    [[nodiscard]] uint8_t rrc(uint8_t value, bool set_z);
-    [[nodiscard]] uint8_t rlc(uint8_t value, bool set_z);
-    [[nodiscard]] uint8_t srl(uint8_t value);
     [[nodiscard]] uint8_t or_x(uint8_t value);
     [[nodiscard]] uint8_t xor_x(uint8_t value);
     [[nodiscard]] uint8_t and_x(uint8_t value);
@@ -63,6 +58,16 @@ public:
     void rst(uint16_t address);
     void call();
     [[nodiscard]] uint8_t swap (uint8_t value);
+    [[nodiscard]] uint8_t rr(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t rl(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t rrc(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t rlc(uint8_t value, bool set_z);
+    [[nodiscard]] uint8_t srl(uint8_t value);
+    [[nodiscard]] uint8_t sla(uint8_t value);
+    [[nodiscard]] uint8_t sra(uint8_t value);
+    void bit(uint8_t bit_position, uint8_t value);
+    [[nodiscard]] uint8_t res(uint8_t bit_position, uint8_t value);
+    [[nodiscard]] uint8_t set_bit(uint8_t bit_position, uint8_t value);
 
     // Main loop
     void step();
