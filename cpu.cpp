@@ -596,7 +596,9 @@ void Cpu::step() {
         }
 
     case 0x2F: { // CPL
-            // TODO: <-
+            A = ~A;
+            set_flag(FLAG_N, true);
+            set_flag(FLAG_H, true);
             break;
         }
 
@@ -655,7 +657,9 @@ void Cpu::step() {
         }
 
     case 0x37: { // SCF
-            // TODO: <-
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, false);
+            set_flag(FLAG_C, true);
             break;
         }
 
@@ -712,8 +716,10 @@ void Cpu::step() {
             break;
         }
 
-    case 0x3F: {
-            // TODO: <-
+    case 0x3F: { // CCF
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, false);
+            set_flag(FLAG_C, !(F & FLAG_C));
             break;
         }
 
@@ -1761,6 +1767,12 @@ void Cpu::step() {
             break;
         }
 
+    case 0xD9: { // RETI
+            ret();
+            IME = true;
+            break;
+        }
+
     case 0xDA: { // JP C, a16
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
@@ -1814,6 +1826,11 @@ void Cpu::step() {
             break;
         }
 
+    case 0xE2: { // LD (C), A
+            mem.write(0xFF00 + C, A);
+            break;
+        }
+
     case 0xE5: { // PUSH HL
             uint8_t low = hl();
             uint8_t high = hl() >> 8;
@@ -1832,6 +1849,20 @@ void Cpu::step() {
 
     case 0xE7: { // RST 4
             rst(0x20);
+            break;
+        }
+
+    case 0xE8: { // ADD SP, s8
+            uint8_t operand = mem.read(PC);
+            int8_t offset = static_cast<int8_t>(operand);
+            PC++;
+            bool half_carry = ((SP & 0x0F) + (operand & 0x0F)) > 0x0F;
+            bool carry = ((SP & 0xFF) + (operand & 0xFF)) > 0xFF;
+            SP += offset;
+            set_flag(FLAG_Z, false);
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, half_carry);
+            set_flag(FLAG_C, carry);
             break;
         }
 
@@ -1875,6 +1906,11 @@ void Cpu::step() {
             break;
         }
 
+    case 0xF2: { // LD A, (C)
+            A = mem.read(0xFF00 + C);
+            break;
+        }
+
     case 0xF3: { // DI
             IME = false;
             break;
@@ -1889,15 +1925,34 @@ void Cpu::step() {
             break;
         }
 
+    case 0xF6: { // OR A, d8
+            uint8_t operand = mem.read(PC);
+            A = or_x(operand);
+            PC++;
+            break;
+        }
+
     case 0xF7: { // RST 6
             rst(0x30);
             break;
         }
 
-    case 0xF6: { // OR A, d8
+    case 0xF8: { // LD HL, SP+s8
             uint8_t operand = mem.read(PC);
-            A = or_x(operand);
+            int8_t offset = static_cast<int8_t>(operand);
             PC++;
+            set_hl(SP + offset);
+            bool half_carry = ((SP & 0x0F) + (operand & 0x0F)) > 0x0F;
+            bool carry = ((SP & 0xFF) + (operand & 0xFF)) > 0xFF;
+            set_flag(FLAG_Z, false);
+            set_flag(FLAG_N, false);
+            set_flag(FLAG_H, half_carry);
+            set_flag(FLAG_C, carry);
+            break;
+        }
+
+    case 0xF9: { // LD SP, HL
+            SP = hl();
             break;
         }
 
