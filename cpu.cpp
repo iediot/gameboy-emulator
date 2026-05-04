@@ -521,7 +521,24 @@ void Cpu::step() {
         }
 
     case 0x27: { // DAA
-            // TODO: <-
+            uint8_t adjustment = 0x00;
+            if (F & FLAG_N) {
+                if (F & FLAG_C)
+                    adjustment += 0x60;
+                if (F & FLAG_H)
+                    adjustment += 0x06;
+                A -= adjustment;
+            } else {
+                if (F & FLAG_C || A > 0x99) {
+                    adjustment += 0x60;
+                    set_flag(FLAG_C, true);
+                }
+                if (F & FLAG_H || (A & 0x0F) > 0x09)
+                    adjustment += 0x06;
+                A += adjustment;
+            }
+            set_flag(FLAG_Z, A == 0);
+            set_flag(FLAG_H, false);
             break;
         }
 
@@ -1889,6 +1906,11 @@ void Cpu::step() {
             uint8_t high = mem.read(PC + 1);
             A = mem.read(combine(high, low));
             PC += 2;
+            break;
+        }
+
+    case 0xFB: { // EI
+            IME = true;
             break;
         }
 
