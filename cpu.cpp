@@ -1788,7 +1788,7 @@ void Cpu::step() {
             case 0x3F: { // SRL A
                     A = srl(A);
                     break;
-            }
+                }
 
             case 0x40: { // BIT 0, B
                     bit(0, B);
@@ -2110,6 +2110,652 @@ void Cpu::step() {
 
             case 0x7F: { // BIT 7, A
                     bit(7, A);
+                    break;
+                }
+
+            case 0x80: { // RES 0, B
+                    B = res(0, B);
+                    break;
+                }
+
+            case 0x81: { // RES 0, C
+                    C = res(0, C);
+                    break;
+                }
+
+            case 0x82: { // RES 0, D
+                    D = res(0, D);
+                    break;
+                }
+
+            case 0x83: { // RES 0, E
+                    E = res(0, E);
+                    break;
+                }
+
+            case 0x84: { // RES 0, H
+                    H = res(0, H);
+                    break;
+                }
+
+            case 0x85: { // RES 0, L
+                    L = res(0, L);
+                    break;
+                }
+
+            case 0x86: { // RES 0, (HL)
+                    mem.write(hl(), res(0, mem.read(hl())));
+                    break;
+                }
+
+            case 0x87: { // RES 0, A
+                    A = res(0, A);
+                    break;
+                }
+
+            case 0x88: { // RES 1, B
+                    B = res(1, B);
+                    break;
+                }
+
+            case 0x89: { // RES 1, C
+                    C = res(1, C);
+                    break;
+                }
+
+            case 0x8A: { // RES 1, D
+                    D = res(1, D);
+                    break;
+                }
+
+            case 0x8B: { // RES 1, E
+                    E = res(1, E);
+                    break;
+                }
+
+            case 0x8C: { // RES 1, H
+                    H = res(1, H);
+                    break;
+                }
+
+            case 0x8D: { // RES 1, L
+                    L = res(1, L);
+                    break;
+                }
+
+            case 0x8E: { // RES 1, (HL)
+                    mem.write(hl(), res(1, mem.read(hl())));
+                    break;
+                }
+
+            case 0x8F: { // RES 1, A
+                    A = res(1, A);
+                    break;
+                }
+
+
+            case 0x90: { // RES 2, B
+                    B = res(2, B);
+                    break;
+                }
+
+            case 0x91: { // RES 2, C
+                    C = res(2, C);
+                    break;
+                }
+
+            case 0x92: { // RES 2, D
+                    D = res(2, D);
+                    break;
+                }
+
+            case 0x93: { // RES 2, E
+                    E = res(2, E);
+                    break;
+                }
+
+            case 0x94: { // RES 2, H
+                    H = res(2, H);
+                    break;
+                }
+
+            case 0x95: { // RES 2, L
+                    L = res(2, L);
+                    break;
+                }
+
+            case 0x96: { // RES 2, (HL)
+                    mem.write(hl(), res(2, mem.read(hl())));
+                    break;
+                }
+
+            case 0x97: { // RES 2, A
+                    A = res(2, A);
+                    break;
+                }
+
+            case 0x98: { // RES 3, B
+                    B = res(3, B);
+                    break;
+                }
+
+            case 0x99: { // RES 3, C
+                    C = res(3, C);
+                    break;
+                }
+
+            case 0x9A: { // RES 3, D
+                    D = res(3, D);
+                    break;
+                }
+
+            case 0x9B: { // RES 3, E
+                    E = res(3, E);
+                    break;
+                }
+
+            case 0x9C: { // RES 3, H
+                    H = res(3, H);
+                    break;
+                }
+
+            case 0x9D: { // RES 3, L
+                    L = res(3, L);
+                    break;
+                }
+
+            case 0x9E: { // RES 3, (HL)
+                    mem.write(hl(), res(3, mem.read(hl())));
+                    break;
+                }
+
+            case 0x9F: { // RES 3, A
+                    A = res(3, A);
+                    break;
+                }
+
+
+            case 0xA0: { // RES 4, B
+                    B = res(4, B);
+                    break;
+                }
+
+            case 0xA1: { // RES 4, C
+                    C = res(4, C);
+                    break;
+                }
+
+            case 0xA2: { // RES 4, D
+                    D = res(4, D);
+                    break;
+                }
+
+            case 0xA3: { // RES 4, E
+                    E = res(4, E);
+                    break;
+                }
+
+            case 0xA4: { // RES 4, H
+                    H = res(4, H);
+                    break;
+                }
+
+            case 0xA5: { // RES 4, L
+                    L = res(4, L);
+                    break;
+                }
+
+            case 0xA6: { // RES 4, (HL)
+                    mem.write(hl(), res(4, mem.read(hl())));
+                    break;
+                }
+
+            case 0xA7: { // RES 4, A
+                    A = res(4, A);
+                    break;
+                }
+
+            case 0xA8: { // RES 5, B
+                    B = res(5, B);
+                    break;
+                }
+
+            case 0xA9: { // RES 5, C
+                    C = res(5, C);
+                    break;
+                }
+
+            case 0xAA: { // RES 5, D
+                    D = res(5, D);
+                    break;
+                }
+
+            case 0xAB: { // RES 5, E
+                    E = res(5, E);
+                    break;
+                }
+
+            case 0xAC: { // RES 5, H
+                    H = res(5, H);
+                    break;
+                }
+
+            case 0xAD: { // RES 5, L
+                    L = res(5, L);
+                    break;
+                }
+
+            case 0xAE: { // RES 5, (HL)
+                    mem.write(hl(), res(5, mem.read(hl())));
+                    break;
+                }
+
+            case 0xAF: { // RES 5, A
+                    A = res(5, A);
+                    break;
+                }
+
+
+            case 0xB0: { // RES 6, B
+                    B = res(6, B);
+                    break;
+                }
+
+            case 0xB1: { // RES 6, C
+                    C = res(6, C);
+                    break;
+                }
+
+            case 0xB2: { // RES 6, D
+                    D = res(6, D);
+                    break;
+                }
+
+            case 0xB3: { // RES 6, E
+                    E = res(6, E);
+                    break;
+                }
+
+            case 0xB4: { // RES 6, H
+                    H = res(6, H);
+                    break;
+                }
+
+            case 0xB5: { // RES 6, L
+                    L = res(6, L);
+                    break;
+                }
+
+            case 0xB6: { // RES 6, (HL)
+                    mem.write(hl(), res(6, mem.read(hl())));
+                    break;
+                }
+
+            case 0xB7: { // RES 6, A
+                    A = res(6, A);
+                    break;
+                }
+
+            case 0xB8: { // RES 7, B
+                    B = res(7, B);
+                    break;
+                }
+
+            case 0xB9: { // RES 7, C
+                    C = res(7, C);
+                    break;
+                }
+
+            case 0xBA: { // RES 7, D
+                    D = res(7, D);
+                    break;
+                }
+
+            case 0xBB: { // RES 7, E
+                    E = res(7, E);
+                    break;
+                }
+
+            case 0xBC: { // RES 7, H
+                    H = res(7, H);
+                    break;
+                }
+
+            case 0xBD: { // RES 7, L
+                    L = res(7, L);
+                    break;
+                }
+
+            case 0xBE: { // RES 7, (HL)
+                    mem.write(hl(), res(7, mem.read(hl())));
+                    break;
+                }
+
+            case 0xBF: { // RES 7, A
+                    A = res(7, A);
+                    break;
+                }
+
+            case 0xC0: { // SET 0, B
+                    B = set_bit(0, B);
+                    break;
+                }
+
+            case 0xC1: { // SET 0, C
+                    C = set_bit(0, C);
+                    break;
+                }
+
+            case 0xC2: { // SET 0, D
+                    D = set_bit(0, D);
+                    break;
+                }
+
+            case 0xC3: { // SET 0, E
+                    E = set_bit(0, E);
+                    break;
+                }
+
+            case 0xC4: { // SET 0, H
+                    H = set_bit(0, H);
+                    break;
+                }
+
+            case 0xC5: { // SET 0, L
+                    L = set_bit(0, L);
+                    break;
+                }
+
+            case 0xC6: { // SET 0, (HL)
+                    mem.write(hl(), set_bit(0, mem.read(hl())));
+                    break;
+                }
+
+            case 0xC7: { // SET 0, A
+                    A = set_bit(0, A);
+                    break;
+                }
+
+            case 0xC8: { // SET 1, B
+                    B = set_bit(1, B);
+                    break;
+                }
+
+            case 0xC9: { // SET 1, C
+                    C = set_bit(1, C);
+                    break;
+                }
+
+            case 0xCA: { // SET 1, D
+                    D = set_bit(1, D);
+                    break;
+                }
+
+            case 0xCB: { // SET 1, E
+                    E = set_bit(1, E);
+                    break;
+                }
+
+            case 0xCC: { // SET 1, H
+                    H = set_bit(1, H);
+                    break;
+                }
+
+            case 0xCD: { // SET 1, L
+                    L = set_bit(1, L);
+                    break;
+                }
+
+            case 0xCE: { // SET 1, (HL)
+                    mem.write(hl(), set_bit(1, mem.read(hl())));
+                    break;
+                }
+
+            case 0xCF: { // SET 1, A
+                    A = set_bit(1, A);
+                    break;
+                }
+
+
+            case 0xD0: { // SET 2, B
+                    B = set_bit(2, B);
+                    break;
+                }
+
+            case 0xD1: { // SET 2, C
+                    C = set_bit(2, C);
+                    break;
+                }
+
+            case 0xD2: { // SET 2, D
+                    D = set_bit(2, D);
+                    break;
+                }
+
+            case 0xD3: { // SET 2, E
+                    E = set_bit(2, E);
+                    break;
+                }
+
+            case 0xD4: { // SET 2, H
+                    H = set_bit(2, H);
+                    break;
+                }
+
+            case 0xD5: { // SET 2, L
+                    L = set_bit(2, L);
+                    break;
+                }
+
+            case 0xD6: { // SET 2, (HL)
+                    mem.write(hl(), set_bit(2, mem.read(hl())));
+                    break;
+                }
+
+            case 0xD7: { // SET 2, A
+                    A = set_bit(2, A);
+                    break;
+                }
+
+            case 0xD8: { // SET 3, B
+                    B = set_bit(3, B);
+                    break;
+                }
+
+            case 0xD9: { // SET 3, C
+                    C = set_bit(3, C);
+                    break;
+                }
+
+            case 0xDA: { // SET 3, D
+                    D = set_bit(3, D);
+                    break;
+                }
+
+            case 0xDB: { // SET 3, E
+                    E = set_bit(3, E);
+                    break;
+                }
+
+            case 0xDC: { // SET 3, H
+                    H = set_bit(3, H);
+                    break;
+                }
+
+            case 0xDD: { // SET 3, L
+                    L = set_bit(3, L);
+                    break;
+                }
+
+            case 0xDE: { // SET 3, (HL)
+                    mem.write(hl(), set_bit(3, mem.read(hl())));
+                    break;
+                }
+
+            case 0xDF: { // SET 3, A
+                    A = set_bit(3, A);
+                    break;
+                }
+
+
+            case 0xE0: { // SET 4, B
+                    B = set_bit(4, B);
+                    break;
+                }
+
+            case 0xE1: { // SET 4, C
+                    C = set_bit(4, C);
+                    break;
+                }
+
+            case 0xE2: { // SET 4, D
+                    D = set_bit(4, D);
+                    break;
+                }
+
+            case 0xE3: { // SET 4, E
+                    E = set_bit(4, E);
+                    break;
+                }
+
+            case 0xE4: { // SET 4, H
+                    H = set_bit(4, H);
+                    break;
+                }
+
+            case 0xE5: { // SET 4, L
+                    L = set_bit(4, L);
+                    break;
+                }
+
+            case 0xE6: { // SET 4, (HL)
+                    mem.write(hl(), set_bit(4, mem.read(hl())));
+                    break;
+                }
+
+            case 0xE7: { // SET 4, A
+                    A = set_bit(4, A);
+                    break;
+                }
+
+            case 0xE8: { // SET 5, B
+                    B = set_bit(5, B);
+                    break;
+                }
+
+            case 0xE9: { // SET 5, C
+                    C = set_bit(5, C);
+                    break;
+                }
+
+            case 0xEA: { // SET 5, D
+                    D = set_bit(5, D);
+                    break;
+                }
+
+            case 0xEB: { // SET 5, E
+                    E = set_bit(5, E);
+                    break;
+                }
+
+            case 0xEC: { // SET 5, H
+                    H = set_bit(5, H);
+                    break;
+                }
+
+            case 0xED: { // SET 5, L
+                    L = set_bit(5, L);
+                    break;
+                }
+
+            case 0xEE: { // SET 5, (HL)
+                    mem.write(hl(), set_bit(5, mem.read(hl())));
+                    break;
+                }
+
+            case 0xEF: { // SET 5, A
+                    A = set_bit(5, A);
+                    break;
+                }
+
+
+            case 0xF0: { // SET 6, B
+                    B = set_bit(6, B);
+                    break;
+                }
+
+            case 0xF1: { // SET 6, C
+                    C = set_bit(6, C);
+                    break;
+                }
+
+            case 0xF2: { // SET 6, D
+                    D = set_bit(6, D);
+                    break;
+                }
+
+            case 0xF3: { // SET 6, E
+                    E = set_bit(6, E);
+                    break;
+                }
+
+            case 0xF4: { // SET 6, H
+                    H = set_bit(6, H);
+                    break;
+                }
+
+            case 0xF5: { // SET 6, L
+                    L = set_bit(6, L);
+                    break;
+                }
+
+            case 0xF6: { // SET 6, (HL)
+                    mem.write(hl(), set_bit(6, mem.read(hl())));
+                    break;
+                }
+
+            case 0xF7: { // SET 6, A
+                    A = set_bit(6, A);
+                    break;
+                }
+
+            case 0xF8: { // SET 7, B
+                    B = set_bit(7, B);
+                    break;
+                }
+
+            case 0xF9: { // SET 7, C
+                    C = set_bit(7, C);
+                    break;
+                }
+
+            case 0xFA: { // SET 7, D
+                    D = set_bit(7, D);
+                    break;
+                }
+
+            case 0xFB: { // SET 7, E
+                    E = set_bit(7, E);
+                    break;
+                }
+
+            case 0xFC: { // SET 7, H
+                    H = set_bit(7, H);
+                    break;
+                }
+
+            case 0xFD: { // SET 7, L
+                    L = set_bit(7, L);
+                    break;
+                }
+
+            case 0xFE: { // SET 7, (HL)
+                    mem.write(hl(), set_bit(7, mem.read(hl())));
+                    break;
+                }
+
+            case 0xFF: { // SET 7, A
+                    A = set_bit(7, A);
                     break;
                 }
 
