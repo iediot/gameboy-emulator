@@ -26,12 +26,16 @@ public:
     uint16_t SP = 0;
     uint16_t PC = 0;
 
+    // Flags
     static constexpr uint8_t FLAG_Z = 0x80; // 10000000
     static constexpr uint8_t FLAG_N = 0x40; // 01000000
     static constexpr uint8_t FLAG_H = 0x20; // 00100000
     static constexpr uint8_t FLAG_C = 0x10; // 00010000
 
-    bool IME = false; // need to implement interrupts
+    // Interrupts
+    bool IME = false;
+    bool ime_pending = false;
+    bool halted = false;
 
     // Constructor
     Cpu(Memory& memory);

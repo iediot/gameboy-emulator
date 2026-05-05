@@ -290,6 +290,41 @@ Cpu::Cpu(Memory& memory) : mem(memory) {
     PC = 0x0100;
 }
 void Cpu::step() {
+    if (halted == true) {
+        if (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F)
+            halted = false;
+        else
+            return;
+    }
+
+    if (IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F) != 0) {
+        uint8_t pending = mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F;
+
+        if (pending & 0x01) {
+            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x01);
+            IME = false;
+            rst(0x40);
+        } else if (pending & 0x02) {
+            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x02);
+            IME = false;
+            rst(0x48);
+        } else if (pending & 0x04) {
+            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x04);
+            IME = false;
+            rst(0x50);
+        } else if (pending & 0x08) {
+            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x08);
+            IME = false;
+            rst(0x58);
+        } else if (pending & 0x10) {
+            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x10);
+            IME = false;
+            rst(0x60);
+        }
+
+        return;
+    }
+
     uint8_t opcode = mem.read(PC);
     PC++;
 
@@ -1018,8 +1053,7 @@ void Cpu::step() {
         }
 
     case 0x76: { // HALT
-            // treated as NOP now
-            // TODO: proper halt and interrupt handling
+            halted = true;
             break;
         }
 
@@ -2998,6 +3032,7 @@ void Cpu::step() {
 
     case 0xF3: { // DI
             IME = false;
+            ime_pending = false;
             break;
         }
 
@@ -3050,7 +3085,7 @@ void Cpu::step() {
         }
 
     case 0xFB: { // EI
-            IME = true;
+            ime_pending = true;
             break;
         }
 
@@ -3070,5 +3105,10 @@ void Cpu::step() {
         std::cerr << "Unknown opcode 0x" << std::hex
         << static_cast<int>(opcode) << " at PC = 0x" << PC - 1 << "\n";
         std::exit(1);
+    }
+
+    if (ime_pending) {
+        IME = true;
+        ime_pending = false;
     }
 }
