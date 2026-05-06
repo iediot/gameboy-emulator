@@ -37,6 +37,11 @@ public:
     bool ime_pending = false;
     bool halted = false;
 
+    // Timer
+    uint16_t internal_div = 0;
+    bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
+    void tick(uint8_t cycles);
+
     // Constructor
     Cpu(Memory& memory);
 

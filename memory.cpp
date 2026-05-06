@@ -5,12 +5,20 @@
 #include <iostream>
 #include "memory.h"
 
+void Memory::sync_div(uint8_t value) {
+    data[0xFF04] = value;
+}
+
 uint8_t Memory::read(uint16_t address) {
     return data[address];
 }
 
 void Memory::write(uint16_t address, uint8_t value) {
-    data[address] = value;
+    if (address == 0xFF04) {
+        div_reset = true;
+    } else {
+        data[address] = value;
+    }
     if (address == 0xFF01) {
         std::cout << static_cast<char>(value) << std::flush;
     }

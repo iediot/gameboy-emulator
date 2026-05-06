@@ -13,6 +13,8 @@ class Memory {
 private:
     std::array<uint8_t, 0x10000> data{};
 public:
+    bool div_reset = false;
+    void sync_div(uint8_t value);
     uint8_t read(uint16_t address);
     void write(uint16_t address, uint8_t value);
     void loadRom(const std::vector<uint8_t>& rom);

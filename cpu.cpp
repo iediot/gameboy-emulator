@@ -5,6 +5,46 @@
 #include <iostream>
 #include "cpu.h"
 
+uint8_t main_opcode_cycles[256] = { // done in m-cycles, so *4 for t-cycles
+//  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+    1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1, // 0
+    1, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1, // 1
+    3, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1, // 2
+    3, 3, 2, 2, 3, 3, 3, 1, 3, 2, 2, 2, 1, 1, 2, 1, // 3
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 4
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 5
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 6
+    2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, // 7
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 8
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 9
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // A
+    1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // B
+    5, 3, 4, 4, 6, 4, 2, 4, 5, 4, 4, 0, 6, 6, 2, 4, // C
+    5, 3, 4, 0, 6, 4, 2, 4, 5, 4, 4, 0, 6, 0, 2, 4, // D
+    3, 3, 2, 0, 0, 4, 2, 4, 4, 1, 4, 0, 0, 0, 2, 4, // E
+    3, 3, 2, 1, 0, 4, 2, 4, 3, 2, 4, 1, 0, 0, 2, 4  // F
+};
+
+uint8_t cb_opcode_cycles[256] = { // done in m-cycles, so *4 for t-cycles
+//  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 0
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 1
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 2
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 3
+    2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 4
+    2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 5
+    2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 6
+    2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 7
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 8
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 9
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // A
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // B
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // C
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // D
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // E
+    2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2  // F
+};
+
 void Cpu::set_flag(uint8_t flag, bool value) {
     if (value) {
         F |= flag;
@@ -263,18 +303,64 @@ uint8_t Cpu::sra(uint8_t value) { // helper for the 'sra' operations
     return value;
 }
 
-void Cpu::bit(uint8_t bit_position, uint8_t value) {
+void Cpu::bit(uint8_t bit_position, uint8_t value) { // helper for the 'bit' operations
     set_flag(FLAG_Z, (value & (1 << bit_position)) == 0);
     set_flag(FLAG_N, false);
     set_flag(FLAG_H, true);
 }
 
-uint8_t Cpu::res(uint8_t bit_position, uint8_t value) {
+uint8_t Cpu::res(uint8_t bit_position, uint8_t value) { // helper for the 'res' operations
     return value & ~(1 << bit_position);
 }
 
-uint8_t Cpu::set_bit(uint8_t bit_position, uint8_t value) {
+uint8_t Cpu::set_bit(uint8_t bit_position, uint8_t value) { // helper for the 'set' operations
     return value | (1 << bit_position);
+}
+
+void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
+    while (cycles)
+    {
+        if (mem.div_reset) {
+            internal_div = 0;
+            mem.div_reset = false;
+        }
+        internal_div++;
+        mem.sync_div(internal_div >> 8);
+        uint8_t TAC = mem.read(0xFF07);
+        bool timer_enable = TAC & 0x04;
+        uint8_t clock_select = TAC & 0x03;
+        uint8_t bit_position;
+        switch (clock_select) {
+            case 0x00: {
+                    bit_position = 9;
+                    break;
+                }
+            case 0x01:  {
+                    bit_position = 3;
+                    break;
+                }
+            case 0x02: {
+                    bit_position = 5;
+                    break;
+                }
+            case 0x03: {
+                    bit_position = 7;
+                    break;
+                }
+        }
+        bool selected_bit = (internal_div >> bit_position) & 1;
+        bool and_result = selected_bit && timer_enable;
+        if (last_and_result && !and_result) {
+            if (mem.read(0xFF05) == 0xFF) {
+                mem.write(0xFF05, mem.read(0xFF06)); // reload from TMA
+                mem.write(0xFF0F, mem.read(0xFF0F) | 0x04); // set bit 2 of IF
+            } else {
+                mem.write(0xFF05, mem.read(0xFF05) + 1); // increment TIMA
+            }
+        }
+        last_and_result = and_result;
+        cycles--;
+    }
 }
 
 Cpu::Cpu(Memory& memory) : mem(memory) {
@@ -290,11 +376,15 @@ Cpu::Cpu(Memory& memory) : mem(memory) {
     PC = 0x0100;
 }
 void Cpu::step() {
+    uint8_t cb_opcode = 0;
+
     if (halted == true) {
         if (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F)
             halted = false;
-        else
+        else {
+            tick(4);
             return;
+        }
     }
 
     if (IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F) != 0) {
@@ -1501,7 +1591,7 @@ void Cpu::step() {
         }
 
     case 0xCB: { // redirect to CB table
-            uint8_t cb_opcode = mem.read(PC);
+            cb_opcode = mem.read(PC);
             PC++;
             switch (cb_opcode) {
             case 0x00: { // RLC B
@@ -3110,5 +3200,11 @@ void Cpu::step() {
     if (ime_pending) {
         IME = true;
         ime_pending = false;
+    }
+
+    if (opcode == 0xCB) {
+        tick(cb_opcode_cycles[cb_opcode] * 4);
+    } else {
+        tick(main_opcode_cycles[opcode] * 4);
     }
 }
