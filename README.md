@@ -1,5 +1,6 @@
-```
 <div align="center">
+  
+```
 trying to make a gb emulator
 
 passed blargg's cpu tests:
@@ -14,5 +15,5 @@ passed blargg's cpu tests:
 09-op r,r                Passed
 10-bit ops               Passed
 11-op a,(hl)             Passed
-</div>
 ```
+</div>
