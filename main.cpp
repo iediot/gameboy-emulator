@@ -5,6 +5,7 @@
 #include <string>
 #include "memory.h"
 #include "cpu.h"
+#include "ppu.h"
 
 int main()
 {
@@ -27,6 +28,7 @@ int main()
     for (const auto& rom_name : roms) {
         Memory mem;
         Cpu cpu(mem);
+        Ppu ppu(mem);
 
         std::ifstream rom_file(path + rom_name, std::ios::binary);
 
@@ -40,7 +42,8 @@ int main()
         mem.loadRom(rom_data);
 
         for (int i = 0; i < 10000000; i++) {
-            cpu.step();
+            uint8_t cycles = cpu.step();
+            ppu.step(cycles);
         }
     }
 }

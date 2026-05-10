@@ -5,6 +5,19 @@
 #include <iostream>
 #include "cpu.h"
 
+Cpu::Cpu(Memory& memory) : mem(memory) {
+    A = 0x01;
+    F = 0xB0;
+    B = 0x00;
+    C = 0x13;
+    D = 0x00;
+    E = 0xD8;
+    H = 0x01;
+    L = 0x4D;
+    SP = 0xFFFE;
+    PC = 0x0100;
+}
+
 uint8_t main_opcode_cycles[256] = { // done in m-cycles, so *4 for t-cycles
 //  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
     1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1, // 0
@@ -363,19 +376,7 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
     }
 }
 
-Cpu::Cpu(Memory& memory) : mem(memory) {
-    A = 0x01;
-    F = 0xB0;
-    B = 0x00;
-    C = 0x13;
-    D = 0x00;
-    E = 0xD8;
-    H = 0x01;
-    L = 0x4D;
-    SP = 0xFFFE;
-    PC = 0x0100;
-}
-void Cpu::step() {
+uint8_t Cpu::step() {
     uint8_t cb_opcode = 0;
 
     if (halted == true) {
@@ -383,7 +384,7 @@ void Cpu::step() {
             halted = false;
         else {
             tick(4);
-            return;
+            return 0;
         }
     }
 
@@ -412,7 +413,7 @@ void Cpu::step() {
             rst(0x60);
         }
 
-        return;
+        return 0;
     }
 
     uint8_t opcode = mem.read(PC);
@@ -3202,9 +3203,9 @@ void Cpu::step() {
         ime_pending = false;
     }
 
-    if (opcode == 0xCB) {
-        tick(cb_opcode_cycles[cb_opcode] * 4);
-    } else {
-        tick(main_opcode_cycles[opcode] * 4);
-    }
+    uint8_t cycles = (opcode == 0xCB) ?
+            cb_opcode_cycles[cb_opcode] * 4 :
+            main_opcode_cycles[opcode] * 4;
+    tick(cycles);
+    return cycles;
 }

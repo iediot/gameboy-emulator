@@ -14,6 +14,9 @@ class Cpu {
 private:
     Memory& mem;
 public:
+    // Constructor
+    Cpu(Memory& memory);
+
     // Registers
     uint8_t A = 0;
     uint8_t B = 0;
@@ -41,9 +44,6 @@ public:
     uint16_t internal_div = 0;
     bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
     void tick(uint8_t cycles);
-
-    // Constructor
-    Cpu(Memory& memory);
 
     // Helpers
     void set_flag(uint8_t flag, bool value);
@@ -79,7 +79,7 @@ public:
     [[nodiscard]] uint8_t set_bit(uint8_t bit_position, uint8_t value);
 
     // Main loop
-    void step();
+    uint8_t step();
 };
 
 

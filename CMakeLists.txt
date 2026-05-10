@@ -7,4 +7,6 @@ add_executable(gameboy_emu main.cpp
         cpu.cpp
         cpu.h
         memory.cpp
-        memory.h)
+        memory.h
+        ppu.cpp
+        ppu.h)
