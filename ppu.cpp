@@ -7,18 +7,45 @@
 Ppu::Ppu(Memory& memory) : mem(memory) {
 }
 
+void Ppu::draw_scanline() {
+    uint8_t scy = mem.read(SCY_ADDR);
+    uint8_t scx = mem.read(SCX_ADDR);
+    uint8_t ly = mem.read(LY_ADDR);
+
+    for (int x = 0; x <= 159; x++) {
+        uint8_t bg_y = scy + ly;
+        uint8_t bg_x = scx + x;
+
+        uint8_t tile_col = bg_x / 8;
+        uint8_t tile_row = bg_y / 8;
+
+        uint16_t map_base = 0x9800;
+        uint16_t map_address = map_base + tile_row * 32 + tile_col;
+
+
+        uint8_t tile_index = mem.read(map_address);
+        uint16_t tile_address = 0x8000 + tile_index * 16;
+
+        uint8_t pixel_row = bg_y % 8;
+        uint16_t row_address = tile_address + pixel_row * 2;
+
+        uint8_t byte_low = mem.read(row_address);
+        uint8_t byte_high = mem.read(row_address + 1);
+    }
+}
+
 void Ppu::step(uint8_t cycles) {
     scanline_cycles += cycles;
     uint8_t mode = 0;
     if (scanline_cycles >= 456) {
         scanline_cycles -= 456;
-        mem.write(0xFF44, mem.read(0xFF44) + 1); // LY increment
-        if (mem.read(0xFF44) >= 154) // check LY if over 154
-            mem.write(0xFF44, 0); // reset to 0 if true
-        if (mem.read(0xFF44) == 144)
-            mem.write(0xFF0F, mem.read(0xFF0F) | 0x01);
+        mem.write(LY_ADDR, mem.read(LY_ADDR) + 1); // LY increment
+        if (mem.read(LY_ADDR) >= 154) // check LY if over 154
+            mem.write(LY_ADDR, 0); // reset to 0 if true
+        if (mem.read(LY_ADDR) == 144)
+            mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x01);
     }
-    if (mem.read(0xFF44) >= 144) { // mode 1 - VBlank
+    if (mem.read(LY_ADDR) >= 144) { // mode 1 - VBlank
         mode = 1;
     } else if (scanline_cycles < 80) { // mode 2 - OAM scan
         mode = 2;
@@ -27,5 +54,8 @@ void Ppu::step(uint8_t cycles) {
     } else { // mode 0 - HBlank
         mode = 0;
     }
-    mem.write(0xFF41, (mem.read(0xFF41) & 0xFC) | mode);
+    mem.write(STAT_ADDR, (mem.read(STAT_ADDR) & 0xFC) | mode);
+    if (mode == 0 && prev_mode != 0 && mem.read(LY_ADDR) < 144)
+        draw_scanline();
+    prev_mode = mode;
 }
