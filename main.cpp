@@ -43,7 +43,7 @@ int main()
     SDL_Event event;
     IMG_Init(IMG_INIT_PNG);
     SDL_Texture* gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
-    SDL_Rect screen_area = {145, 140, 330, 300};
+    SDL_Rect screen_area = {142, 129, 330, 301};
 
     for (const auto& rom_name : roms) {
         Memory mem;
