@@ -57,8 +57,10 @@ void Ppu::step(uint8_t cycles) {
         mem.write(LY_ADDR, mem.read(LY_ADDR) + 1); // LY increment
         if (mem.read(LY_ADDR) >= 154) // check LY if over 154
             mem.write(LY_ADDR, 0); // reset to 0 if true
-        if (mem.read(LY_ADDR) == 144)
+        if (mem.read(LY_ADDR) == 144) {
             mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x01);
+            frame_ready = true;
+        }
     }
     if (mem.read(LY_ADDR) >= 144) { // mode 1 - VBlank
         mode = 1;

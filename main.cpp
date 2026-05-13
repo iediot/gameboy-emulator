@@ -7,6 +7,12 @@
 #include "cpu.h"
 #include "ppu.h"
 
+#ifdef __APPLE__
+#include <SDL.h>
+#else
+#include <SDL2/SDL.h>
+#endif
+
 int main()
 {
     std::string path = "../roms/test-roms/cpu_instrs/individual/";
@@ -25,6 +31,15 @@ int main()
         "11-op a,(hl).gb"
     };
 
+    SDL_Init(SDL_INIT_VIDEO);
+    SDL_Window* window = SDL_CreateWindow("GBEmulator", // window title
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, // center the window
+        640, 576, SDL_WINDOW_SHOWN); // resolution for 4x scale
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+        SDL_TEXTUREACCESS_STREAMING, 160, 144);
+    SDL_Event event;
+
     for (const auto& rom_name : roms) {
         Memory mem;
         Cpu cpu(mem);
@@ -41,9 +56,65 @@ int main()
             std::istreambuf_iterator<char>()};
         mem.loadRom(rom_data);
 
-        for (int i = 0; i < 10000000; i++) {
-            uint8_t cycles = cpu.step();
-            ppu.step(cycles);
+        int frames_after_done = 0;
+
+        while (true) {
+            uint8_t cycles = cpu.step(); // cycling through the cpu opcodes
+            ppu.step(cycles); // cycling to get the ppu rendering
+
+            if (frames_after_done > 60) {
+                /* check if the current test is done and
+                 * if so it breaks out of this inner
+                 * loop and moves to the next rom
+                 */
+                // to have time to output the result of the test
+                SDL_Delay(1000);
+                break;
+            }
+
+            if (ppu.frame_ready) {
+                if (mem.test_done) frames_after_done++;
+
+                uint32_t pixels[144 * 160]; // the array containing the pixels
+
+                for (int y = 0; y < 144; y++)
+                    for (int x = 0; x < 160; x++)
+                        switch (ppu.framebuffer[y][x]) {
+                            /* mapping the values calculated in
+                             * the ppu to the actual colors to be displayed
+                             */
+                            case 0: {
+                                pixels[y * 160 + x] = 0xFFFFFFFF; // white
+                                break;
+                            }
+                            case 1: {
+                                pixels[y * 160 + x] = 0xFFAAAAAA; // light gray
+                                break;
+                            }
+                            case 2: {
+                                pixels[y * 160 + x] = 0xFF555555; // dark gray
+                                break;
+                            }
+                            case 3: {
+                                pixels[y * 160 + x] = 0xFF000000; // black
+                                break;
+                            }
+                        }
+
+                SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
+                SDL_RenderClear(renderer);
+                SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+                SDL_RenderPresent(renderer);
+
+                // delay to make the tests running actually visible (i.e., frame pacing)
+                SDL_Delay(8);
+
+                ppu.frame_ready = false;
+                while (SDL_PollEvent(&event)) {
+                    if (event.type == SDL_QUIT)
+                        std::exit(0);
+                }
+            }
         }
     }
 }

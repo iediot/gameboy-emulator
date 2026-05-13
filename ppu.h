@@ -30,6 +30,8 @@ public:
     uint8_t framebuffer[144][160] = {};
     uint8_t prev_mode = 0;
 
+    bool frame_ready = false;
+
     // functions used throughout ppu
     void draw_scanline();
     void step(uint8_t cycles);
