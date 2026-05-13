@@ -84,19 +84,19 @@ int main()
                              * the ppu to the actual colors to be displayed
                              */
                             case 0: {
-                                pixels[y * 160 + x] = 0xFFFFFFFF; // white
+                                pixels[y * 160 + x] = 0xFF627102; // white (in reality green)
                                 break;
                             }
                             case 1: {
-                                pixels[y * 160 + x] = 0xFFAAAAAA; // light gray
+                                pixels[y * 160 + x] = 0xFF4D5802; // light gray (darker shade of green)
                                 break;
                             }
                             case 2: {
-                                pixels[y * 160 + x] = 0xFF555555; // dark gray
+                                pixels[y * 160 + x] = 0xFF364002; // dark gray (even darker shade of green)
                                 break;
                             }
                             case 3: {
-                                pixels[y * 160 + x] = 0xFF000000; // black
+                                pixels[y * 160 + x] = 0xFF1F2701; // black (darkest shade of green)
                                 break;
                             }
                         }
