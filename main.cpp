@@ -9,8 +9,10 @@
 
 #ifdef __APPLE__
 #include <SDL.h>
+#include <SDL_image.h>
 #else
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #endif
 
 int main()
@@ -34,11 +36,14 @@ int main()
     SDL_Init(SDL_INIT_VIDEO);
     SDL_Window* window = SDL_CreateWindow("GBEmulator", // window title
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, // center the window
-        640, 576, SDL_WINDOW_SHOWN); // resolution for 4x scale
+        600, 1000, SDL_WINDOW_SHOWN); // resolution for 4x scale
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, 160, 144);
     SDL_Event event;
+    IMG_Init(IMG_INIT_PNG);
+    SDL_Texture* gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
+    SDL_Rect screen_area = {145, 140, 330, 300};
 
     for (const auto& rom_name : roms) {
         Memory mem;
@@ -103,7 +108,8 @@ int main()
 
                 SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
                 SDL_RenderClear(renderer);
-                SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+                SDL_RenderCopy(renderer, gameboy_sprite, nullptr, nullptr);
+                SDL_RenderCopy(renderer, texture, nullptr, &screen_area);
                 SDL_RenderPresent(renderer);
 
                 // delay to make the tests running actually visible (i.e., frame pacing)

@@ -12,4 +12,5 @@ add_executable(gameboy_emu main.cpp
         ppu.h)
 
 find_package(SDL2 REQUIRED)
-target_link_libraries(gameboy_emu PRIVATE SDL2::SDL2)
+find_package(SDL2_image REQUIRED)
+target_link_libraries(gameboy_emu PRIVATE SDL2::SDL2 SDL2_image::SDL2_image)
