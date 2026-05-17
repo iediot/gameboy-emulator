@@ -12,6 +12,8 @@ class Ppu
 {
 private:
     Memory& mem;
+    // helper for our draw method
+    uint8_t fetch_tile_pixel(uint8_t x, uint8_t y, uint16_t map_base);
 public:
     // very used memory addresses
     static constexpr uint16_t IF_ADDR = 0xFF0F;
@@ -21,6 +23,8 @@ public:
     static constexpr uint16_t SCX_ADDR = 0xFF43;
     static constexpr uint16_t LY_ADDR = 0xFF44;
     static constexpr uint16_t BGP_ADDR = 0xFF47;
+    static constexpr uint16_t WY_ADDR = 0xFF4A;
+    static constexpr uint16_t WX_ADDR = 0xFF4B;
 
     // constructor
     Ppu(Memory& memory);
