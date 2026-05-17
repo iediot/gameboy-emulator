@@ -12,6 +12,10 @@ void Ppu::draw_scanline() {
     uint8_t scy = mem.read(SCY_ADDR);
     uint8_t scx = mem.read(SCX_ADDR);
     uint8_t ly = mem.read(LY_ADDR);
+    uint8_t lcdc = mem.read(LCDC_ADDR);
+
+    if (!(lcdc & 0x80) || !(lcdc & 0x01))
+        return;
 
     for (int x = 0; x <= 159; x++) {
         // compute the background coordinates
@@ -23,14 +27,22 @@ void Ppu::draw_scanline() {
         uint8_t tile_row = bg_y / 8;
 
         // look up the tile index in the tile map
-        uint16_t map_base = 0x9800;
+        uint16_t map_base;
+        if (lcdc & 0x08)
+            map_base = 0x9C00;
+        else
+            map_base = 0x9800;
         uint16_t map_address = map_base + tile_row * 32 + tile_col;
         uint8_t tile_index = mem.read(map_address);
 
         // find the tile's pixel data in VRAM
-        uint16_t tile_address = 0x8000 + tile_index * 16;
+        uint16_t tile_address;
+        if (lcdc & 0x10)
+            tile_address = 0x8000 + tile_index * 16;
+        else
+            tile_address = 0x9000 + (int8_t)tile_index * 16;
 
-        // // row of pixel data
+        // row of pixel data
         uint8_t pixel_row = bg_y % 8;
         uint16_t row_address = tile_address + pixel_row * 2;
         uint8_t byte_low = mem.read(row_address);
