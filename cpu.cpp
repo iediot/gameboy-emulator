@@ -384,7 +384,7 @@ uint8_t Cpu::step() {
             halted = false;
         else {
             tick(4);
-            return 0;
+            return 4;
         }
     }
 

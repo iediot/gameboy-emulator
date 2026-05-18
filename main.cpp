@@ -17,9 +17,11 @@
 
 int main()
 {
-    std::string path = "../roms/test-roms/cpu_instrs/individual/";
+    std::string cpu_test_path = "../roms/test-roms/cpu_instrs/individual/";
+    std::string ppu_test_path = "../roms/test-roms/";
+    std::string game_path = "../roms/game-roms/";
 
-    std::vector<std::string> roms = {
+    std::vector<std::string> cpu_test_roms = {
         "01-special.gb",
         "02-interrupts.gb",
         "03-op sp,hl.gb",
@@ -31,6 +33,14 @@ int main()
         "09-op r,r.gb",
         "10-bit ops.gb",
         "11-op a,(hl).gb"
+    };
+
+    std::vector<std::string> game_rom = {
+        "Tetris.gb"
+    };
+
+    std::vector<std::string> ppu_test_rom = {
+        "dmg-acid2.gb"
     };
 
     SDL_Init(SDL_INIT_VIDEO);
@@ -45,12 +55,14 @@ int main()
     SDL_Texture* gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
     SDL_Rect screen_area = {142, 129, 330, 301};
 
-    for (const auto& rom_name : roms) {
+    // change for debugging or testing purposes (game_rom / cpu_test_roms / ppu_test_rom)
+    for (const auto& rom_name : ppu_test_rom) {
         Memory mem;
         Cpu cpu(mem);
         Ppu ppu(mem);
 
-        std::ifstream rom_file(path + rom_name, std::ios::binary);
+        // change for debugging or testing purposes (game_path / cpu_test_path / ppu_test_path)
+        std::ifstream rom_file(ppu_test_path + rom_name, std::ios::binary);
 
         if (!rom_file) {
             std::cerr << "Could not open: " << rom_name << "\n";
@@ -78,8 +90,6 @@ int main()
             }
 
             if (ppu.frame_ready) {
-                if (mem.test_done) frames_after_done++;
-
                 uint32_t pixels[144 * 160]; // the array containing the pixels
 
                 for (int y = 0; y < 144; y++)

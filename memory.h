@@ -17,7 +17,6 @@ public:
     bool div_reset = false;
 
     std::string serial_buffer;
-    bool test_done = false;
 
     void sync_div(uint8_t value);
     uint8_t read(uint16_t address);

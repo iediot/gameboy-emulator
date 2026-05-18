@@ -22,8 +22,6 @@ void Memory::write(uint16_t address, uint8_t value) {
     if (address == 0xFF01) {
         serial_buffer.push_back(static_cast<char>(value));
         std::cout << static_cast<char>(value) << std::flush;
-        if (serial_buffer.ends_with("Passed") || serial_buffer.ends_with("Failed"))
-            test_done = true;
     }
 }
 

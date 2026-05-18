@@ -13,7 +13,7 @@ class Ppu
 private:
     Memory& mem;
     // helper for our draw method
-    uint8_t fetch_tile_pixel(uint8_t x, uint8_t y, uint16_t map_base);
+    uint8_t fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base);
 public:
     // very used memory addresses
     static constexpr uint16_t IF_ADDR = 0xFF0F;
@@ -22,12 +22,18 @@ public:
     static constexpr uint16_t SCY_ADDR = 0xFF42;
     static constexpr uint16_t SCX_ADDR = 0xFF43;
     static constexpr uint16_t LY_ADDR = 0xFF44;
+    static constexpr uint16_t LYC_ADDR = 0xFF45;
     static constexpr uint16_t BGP_ADDR = 0xFF47;
     static constexpr uint16_t WY_ADDR = 0xFF4A;
     static constexpr uint16_t WX_ADDR = 0xFF4B;
+    static constexpr uint16_t OBP0_ADDR = 0xFF48;
+    static constexpr uint16_t OBP1_ADDR = 0xFF49;
 
     // constructor
     Ppu(Memory& memory);
+
+    // array to keep track of drawn pixels
+    uint8_t bg_color_ids[144][160];
 
     // variables used throughout ppu
     uint16_t scanline_cycles = 0;
@@ -36,8 +42,10 @@ public:
 
     bool frame_ready = false;
 
-    // functions used throughout ppu
+    // the draw functions
+    void draw_sprite();
     void draw_scanline();
+
     void step(uint8_t cycles);
 };
 
