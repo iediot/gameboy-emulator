@@ -4,6 +4,8 @@
 
 #include "ppu.h"
 
+#include <algorithm>
+
 Ppu::Ppu(Memory& memory) : mem(memory) {}
 
 uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base) {
@@ -39,6 +41,16 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base) {
 }
 
 void Ppu::draw_sprite() {
+    // sprites need to be drawn after sorting to be just the way gameboy logic draws them
+    struct sprite_vars {
+        uint8_t x;
+        uint8_t tile_index;
+        uint8_t flags;
+        uint8_t row;
+        uint8_t oam_index;
+    };
+    std::vector<sprite_vars> scanline_sprites;
+
     uint8_t LCDC = mem.read(LCDC_ADDR);
     uint8_t LY = mem.read(LY_ADDR);
 
@@ -66,6 +78,22 @@ void Ppu::draw_sprite() {
 
         int row = LY - y;
 
+        scanline_sprites.push_back({x, tile_index, flags, (uint8_t)row, (uint8_t)i});
+    }
+
+    // sort by x descending, and for ties earlier oam index wins
+    std::ranges::stable_sort(scanline_sprites, [](const auto& a, const auto& b){
+        if (a.x != b.x) return a.x > b.x;
+        return a.oam_index > b.oam_index;
+    });
+
+    for (const auto& sprite : scanline_sprites) {
+        // unpack the fields into local vars
+        uint8_t x = sprite.x;
+        uint8_t tile_index = sprite.tile_index;
+        uint8_t flags = sprite.flags;
+        int row = sprite.row;
+
         if (sprite_height == 16)
             tile_index &= 0xFE;
 
@@ -76,7 +104,8 @@ void Ppu::draw_sprite() {
         uint8_t low_byte = mem.read(row_address);
         uint8_t high_byte = mem.read(row_address + 1);
 
-        for (int c = 0; c < 8; c++) {
+        for (int c = 0; c < 8; c++)
+        {
             int screen_x = (x - 8) + c;
 
             // skip if out of bounds
@@ -166,7 +195,7 @@ void Ppu::draw_scanline() {
         else
             window_tile_map = 0x9800;
 
-        uint8_t win_y = LY - WY;
+        uint8_t win_y = window_line_counter;
         for (int x = 0; x < 160; x++) {
             if (x < WX - 7)
                 continue;
@@ -182,6 +211,8 @@ void Ppu::draw_scanline() {
             bg_color_ids[LY][x] = color_id;
             framebuffer[LY][x] = final_color;
         }
+
+        window_line_counter++;
     }
 
     draw_sprite();
@@ -206,8 +237,10 @@ void Ppu::step(uint8_t cycles) {
         if (mem.read(LY_ADDR) != mem.read(LYC_ADDR))
             mem.write(STAT_ADDR, mem.read(STAT_ADDR) & ~0x04);
 
-        if (mem.read(LY_ADDR) >= 154) // check LY if over 154
+        if (mem.read(LY_ADDR) >= 154) { // check LY if over 154
             mem.write(LY_ADDR, 0); // reset to 0 if true
+            window_line_counter = 0; // also reset the window counter
+        }
         if (mem.read(LY_ADDR) == 144) {
             mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x01);
             frame_ready = true;

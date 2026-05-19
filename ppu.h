@@ -39,6 +39,7 @@ public:
     uint16_t scanline_cycles = 0;
     uint8_t framebuffer[144][160] = {};
     uint8_t prev_mode = 0;
+    uint8_t window_line_counter = 0;
 
     bool frame_ready = false;
 
