@@ -18,7 +18,7 @@
 int main()
 {
     std::string cpu_test_path = "../roms/test-roms/cpu_instrs/individual/";
-    std::string ppu_test_path = "../roms/test-roms/";
+    std::string ppu_test_path = "../roms/ppu-test-rom/";
     std::string game_path = "../roms/game-roms/";
 
     std::vector<std::string> cpu_test_roms = {
