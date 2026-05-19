@@ -16,6 +16,11 @@ private:
 public:
     bool div_reset = false;
 
+    // state for the input buttons
+    uint8_t button_state = 0xFF;
+    // method to set the state of the button
+    void set_button(int button, bool pressed);
+
     std::string serial_buffer;
 
     void sync_div(uint8_t value);

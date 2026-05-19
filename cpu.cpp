@@ -379,6 +379,11 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
 uint8_t Cpu::step() {
     uint8_t cb_opcode = 0;
 
+    static int counter = 0;
+    if (counter++ % 1000000 == 0)
+        printf("PC=%04X halted=%d IF=%02X IE=%02X IME=%d\n",
+            PC, halted, mem.read(0xFF0F), mem.read(0xFFFF), IME);
+
     if (halted == true) {
         if (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F)
             halted = false;

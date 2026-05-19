@@ -17,11 +17,23 @@
 
 int main()
 {
-    std::string cpu_test_path = "../roms/test-roms/cpu_instrs/individual/";
+    std::string blargg_cpu_instrs_test_path = "../roms/test-roms/cpu_instrs/individual/";
     std::string ppu_test_path = "../roms/ppu-test-rom/";
     std::string game_path = "../roms/game-roms/";
+    std::string blargg_cpu_instr_timing_path = "../roms/test-roms/instr_timing/";
+    std::string blargg_cpu_mem_timing_path = "../roms/test-roms/mem_timing/individual/";
 
-    std::vector<std::string> cpu_test_roms = {
+    std::vector<std::string> blargg_cpu_instr_timing_roms = {
+        "instr_timing.gb"
+    };
+
+    std::vector<std::string> blargg_cpu_mem_timing_roms = {
+        "01-read_timing.gb",
+        "02-write_timing.gb",
+        "03-modify_timing.gb"
+    };
+
+    std::vector<std::string> blargg_cpu_instrs_test_roms = {
         "01-special.gb",
         "02-interrupts.gb",
         "03-op sp,hl.gb",
@@ -55,14 +67,16 @@ int main()
     SDL_Texture* gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
     SDL_Rect screen_area = {142, 129, 330, 301};
 
-    // change for debugging or testing purposes (game_rom / cpu_test_roms / ppu_test_rom)
-    for (const auto& rom_name : ppu_test_rom) {
+    // change for debugging or testing purposes (game_rom / blargg_cpu_instrs_test_roms / ppu_test_rom
+    //                                           blargg_cpu_instr_timing_roms / blargg_cpu_mem_timing_roms)
+    for (const auto& rom_name : blargg_cpu_mem_timing_roms) {
         Memory mem;
         Cpu cpu(mem);
         Ppu ppu(mem);
 
-        // change for debugging or testing purposes (game_path / cpu_test_path / ppu_test_path)
-        std::ifstream rom_file(ppu_test_path + rom_name, std::ios::binary);
+        // change for debugging or testing purposes (game_path / blargg_cpu_instrs_test_path / ppu_test_path
+        //                                           blargg_cpu_instr_timing_path / blargg_cpu_mem_timing_path)
+        std::ifstream rom_file(blargg_cpu_mem_timing_path + rom_name, std::ios::binary);
 
         if (!rom_file) {
             std::cerr << "Could not open: " << rom_name << "\n";
@@ -129,6 +143,23 @@ int main()
                 while (SDL_PollEvent(&event)) {
                     if (event.type == SDL_QUIT)
                         std::exit(0);
+                    if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                        bool pressed = (event.type == SDL_KEYDOWN);
+                        switch (event.key.keysym.sym) {
+                            case SDLK_UP:     mem.set_button(2, pressed); break;
+                            case SDLK_DOWN:   mem.set_button(3, pressed); break;
+                            case SDLK_RIGHT:  mem.set_button(0, pressed); break;
+                            case SDLK_LEFT:   mem.set_button(1, pressed); break;
+                            case SDLK_w:     mem.set_button(2, pressed); break;
+                            case SDLK_s:   mem.set_button(3, pressed); break;
+                            case SDLK_d:  mem.set_button(0, pressed); break;
+                            case SDLK_a:   mem.set_button(1, pressed); break;
+                            case SDLK_z:      mem.set_button(4, pressed); break;
+                            case SDLK_x:      mem.set_button(5, pressed); break;
+                            case SDLK_BACKSPACE: mem.set_button(6, pressed); break;
+                            case SDLK_RETURN:    mem.set_button(7, pressed); break;
+                        }
+                    }
                 }
             }
         }
