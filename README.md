@@ -2,7 +2,7 @@
 
 A Game Boy DMG emulator in C++.
 
-<img width="600" height="1000" alt="image" src="https://github.com/user-attachments/assets/09568eab-8cc9-4448-a97b-e209ef2986df" />
+https://github.com/user-attachments/assets/95a33f49-aab0-4b83-84a7-7e71cf58fca3
 
 ## Status
 
