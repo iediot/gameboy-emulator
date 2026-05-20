@@ -47,8 +47,9 @@ int main()
         "11-op a,(hl).gb"
     };
 
-    std::vector<std::string> game_rom = {
-        "Tetris.gb"
+    std::vector<std::string> game_roms = {
+        "Dr. Mario.gb",
+        "Tetris.gb",
     };
 
     std::vector<std::string> ppu_test_rom = {
@@ -67,16 +68,16 @@ int main()
     SDL_Texture* gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
     SDL_Rect screen_area = {142, 129, 330, 301};
 
-    // change for debugging or testing purposes (game_rom / blargg_cpu_instrs_test_roms / ppu_test_rom
+    // change for debugging or testing purposes (game_roms / blargg_cpu_instrs_test_roms / ppu_test_rom
     //                                           blargg_cpu_instr_timing_roms / blargg_cpu_mem_timing_roms)
-    for (const auto& rom_name : blargg_cpu_mem_timing_roms) {
+    for (const auto& rom_name : game_roms) {
         Memory mem;
         Cpu cpu(mem);
         Ppu ppu(mem);
 
         // change for debugging or testing purposes (game_path / blargg_cpu_instrs_test_path / ppu_test_path
         //                                           blargg_cpu_instr_timing_path / blargg_cpu_mem_timing_path)
-        std::ifstream rom_file(blargg_cpu_mem_timing_path + rom_name, std::ios::binary);
+        std::ifstream rom_file(game_path + rom_name, std::ios::binary);
 
         if (!rom_file) {
             std::cerr << "Could not open: " << rom_name << "\n";

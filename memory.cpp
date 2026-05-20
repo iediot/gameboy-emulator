@@ -56,13 +56,25 @@ void Memory::write(uint16_t address, uint8_t value) {
         return;
     }
 
+    // DMA
+    if (address == 0xFF46) {
+        uint16_t source = value << 8;
+        for (int i = 0; i < 160; i++) {
+            data[0xFE00 + i] = data[source + i];
+        }
+        data[address] = value;
+        return;
+    }
+
     data[address] = value;
 
+    /*
     // serial output used by test roms to print
     if (address == 0xFF01) {
         serial_buffer.push_back(static_cast<char>(value));
         std::cout << static_cast<char>(value) << std::flush;
     }
+    */
 }
 
 void Memory::loadRom(const std::vector<uint8_t>& rom) {

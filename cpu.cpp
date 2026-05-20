@@ -378,11 +378,8 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
 
 uint8_t Cpu::step() {
     uint8_t cb_opcode = 0;
-
-    static int counter = 0;
-    if (counter++ % 1000000 == 0)
-        printf("PC=%04X halted=%d IF=%02X IE=%02X IME=%d\n",
-            PC, halted, mem.read(0xFF0F), mem.read(0xFFFF), IME);
+    // tick for the opcodes that require a different timing based on operation (e.g. JR, CALL, etc.)
+    uint8_t conditional_cycles = 0;
 
     if (halted == true) {
         if (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F)
@@ -642,6 +639,9 @@ uint8_t Cpu::step() {
             PC++;
             if (!(F & FLAG_Z)) {
                 PC += offset;
+                conditional_cycles = 3;
+            } else {
+                conditional_cycles = 2;
             }
             break;
         }
@@ -714,6 +714,9 @@ uint8_t Cpu::step() {
             PC++;
             if (F & FLAG_Z) {
                 PC += offset;
+                conditional_cycles = 3;
+            } else {
+                conditional_cycles = 2;
             }
             break;
         }
@@ -774,6 +777,9 @@ uint8_t Cpu::step() {
             PC++;
             if (!(F & FLAG_C)) {
                 PC += offset;
+                conditional_cycles = 3;
+            } else {
+                conditional_cycles = 2;
             }
             break;
         }
@@ -835,6 +841,9 @@ uint8_t Cpu::step() {
             PC++;
             if (F & FLAG_C) {
                 PC += offset;
+                conditional_cycles = 3;
+            } else {
+                conditional_cycles = 2;
             }
             break;
         }
@@ -1517,8 +1526,12 @@ uint8_t Cpu::step() {
         }
 
     case 0xC0: { // RET NZ
-            if (!(F & FLAG_Z))
+            if (!(F & FLAG_Z)) {
                 ret();
+                conditional_cycles = 5;
+            } else {
+                conditional_cycles = 2;
+            }
             break;
         }
 
@@ -1535,8 +1548,12 @@ uint8_t Cpu::step() {
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             PC += 2;
-            if (!(F & FLAG_Z))
+            if (!(F & FLAG_Z)) {
                 PC = combine(high, low);
+                conditional_cycles = 4;
+            } else {
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -1548,10 +1565,13 @@ uint8_t Cpu::step() {
         }
 
     case 0xC4: { // CALL NZ, a16
-            if (!(F & FLAG_Z))
+            if (!(F & FLAG_Z)) {
                 call();
-            else
+                conditional_cycles = 6;
+            } else {
                 PC += 2;
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -1577,8 +1597,12 @@ uint8_t Cpu::step() {
         }
 
     case 0xC8: { // RET Z
-            if (F & FLAG_Z)
+            if (F & FLAG_Z) {
                 ret();
+                conditional_cycles = 5;
+            } else {
+                conditional_cycles = 2;
+            }
             break;
         }
 
@@ -1591,8 +1615,12 @@ uint8_t Cpu::step() {
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             PC += 2;
-            if (F & FLAG_Z)
+            if (F & FLAG_Z) {
                 PC = combine(high, low);
+                conditional_cycles = 4;
+            } else {
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -2899,10 +2927,13 @@ uint8_t Cpu::step() {
         }
 
     case 0xCC: { // CALL Z, a16
-            if (F & FLAG_Z)
+            if (F & FLAG_Z) {
                 call();
-            else
+                conditional_cycles = 6;
+            } else {
                 PC += 2;
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -2924,8 +2955,12 @@ uint8_t Cpu::step() {
         }
 
     case 0xD0: { // RET NC
-            if (!(F & FLAG_C))
+            if (!(F & FLAG_C)) {
                 ret();
+                conditional_cycles = 5;
+            } else {
+                conditional_cycles = 2;
+            }
             break;
         }
 
@@ -2942,16 +2977,23 @@ uint8_t Cpu::step() {
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             PC += 2;
-            if (!(F & FLAG_C))
+            if (!(F & FLAG_C)) {
                 PC = combine(high, low);
+                conditional_cycles = 4;
+            } else {
+                conditional_cycles = 3;
+            }
             break;
         }
 
     case 0xD4: { // CALL NC, a16
-            if (!(F & FLAG_C))
-            call();
-            else
+            if (!(F & FLAG_C)) {
+                call();
+                conditional_cycles = 6;
+            } else {
                 PC += 2;
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -2977,8 +3019,12 @@ uint8_t Cpu::step() {
         }
 
     case 0xD8: { // RET C
-            if (F & FLAG_C)
+            if (F & FLAG_C) {
                 ret();
+                conditional_cycles = 5;
+            } else {
+                conditional_cycles = 2;
+            }
             break;
         }
 
@@ -2992,8 +3038,12 @@ uint8_t Cpu::step() {
             uint8_t low = mem.read(PC);
             uint8_t high = mem.read(PC + 1);
             PC += 2;
-            if (F & FLAG_C)
+            if (F & FLAG_C) {
                 PC = combine(high, low);
+                conditional_cycles = 4;
+            } else {
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -3008,9 +3058,11 @@ uint8_t Cpu::step() {
                 SP--;
                 mem.write(SP, PC & 0xFF);
                 PC = combine(high, low);
-            }
-            else
+                conditional_cycles = 6;
+            } else {
                 PC += 2;
+                conditional_cycles = 3;
+            }
             break;
         }
 
@@ -3208,9 +3260,14 @@ uint8_t Cpu::step() {
         ime_pending = false;
     }
 
-    uint8_t cycles = (opcode == 0xCB) ?
+    uint8_t cycles;
+    if (conditional_cycles)
+        cycles = conditional_cycles * 4;
+    else
+        cycles = (opcode == 0xCB) ?
             cb_opcode_cycles[cb_opcode] * 4 :
             main_opcode_cycles[opcode] * 4;
+
     tick(cycles);
     return cycles;
 }
