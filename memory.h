@@ -23,10 +23,14 @@ public:
 
     std::string serial_buffer;
 
+    std::vector<uint8_t> rom;
+    uint8_t rom_bank = 1;
+    uint8_t mbc_type = 0;
+
     void sync_div(uint8_t value);
     uint8_t read(uint16_t address);
     void write(uint16_t address, uint8_t value);
-    void loadRom(const std::vector<uint8_t>& rom);
+    void loadRom(const std::vector<uint8_t>& rom_to_load);
 };
 
 

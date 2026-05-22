@@ -16,7 +16,17 @@ void Memory::sync_div(uint8_t value) {
     data[0xFF04] = value;
 }
 
-uint8_t Memory::read(uint16_t address) {
+uint8_t Memory::read(uint16_t address)
+{
+    // bank 0 is in between these addresses
+    if (address >= 0x0000 && address <= 0x3FFF) {
+        return rom[address];
+    }
+    // this is the switchable bank
+    if (address >= 0x4000 && address <= 0x7FFF) {
+        return rom[rom_bank * 0x4000 + (address - 0x4000)];
+    }
+    // address for input
     if (address == 0xFF00) {
         uint8_t joyp_byte = data[0xFF00];
         bool bit_4_set = joyp_byte & 0x10;
@@ -42,6 +52,15 @@ uint8_t Memory::read(uint16_t address) {
 }
 
 void Memory::write(uint16_t address, uint8_t value) {
+    // writing here selects the lower 5 bits
+    if (address >= 0x2000 && address <= 0x3FFF) {
+        rom_bank = value & 0x1F;
+        // mbc1 can't write to bank 0 so map to 1
+        if (rom_bank == 0)
+            rom_bank = 1;
+        return;
+    }
+
     /* for the joypad register only bits
        4 and 5 are writable so we mask them */
     if (address == 0xFF00) {
@@ -77,7 +96,7 @@ void Memory::write(uint16_t address, uint8_t value) {
     */
 }
 
-void Memory::loadRom(const std::vector<uint8_t>& rom) {
-    for (size_t i = 0; i < rom.size() && i < data.size(); i++)
-        data[i] = rom[i];
+void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
+    rom = rom_to_load;
+    mbc_type = rom[0x0147];
 }

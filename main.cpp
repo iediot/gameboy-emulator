@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <fstream>
 #include <string>
+#include <algorithm>
 #include "memory.h"
 #include "cpu.h"
 #include "ppu.h"
@@ -14,6 +15,12 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #endif
+
+auto to_lower = [](std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](unsigned char c){ return std::tolower(c); });
+    return s;
+};
 
 int main()
 {
@@ -50,6 +57,8 @@ int main()
     std::vector<std::string> game_roms = {
         "Dr. Mario.gb",
         "Tetris.gb",
+        "Kirby's Dream Land.gb",
+        "Super Mario Land.gb"
     };
 
     std::vector<std::string> ppu_test_rom = {
@@ -68,98 +77,98 @@ int main()
     SDL_Texture* gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
     SDL_Rect screen_area = {142, 129, 330, 301};
 
-    // change for debugging or testing purposes (game_roms / blargg_cpu_instrs_test_roms / ppu_test_rom
-    //                                           blargg_cpu_instr_timing_roms / blargg_cpu_mem_timing_roms)
-    for (const auto& rom_name : game_roms) {
-        Memory mem;
-        Cpu cpu(mem);
-        Ppu ppu(mem);
-
-        // change for debugging or testing purposes (game_path / blargg_cpu_instrs_test_path / ppu_test_path
-        //                                           blargg_cpu_instr_timing_path / blargg_cpu_mem_timing_path)
-        std::ifstream rom_file(game_path + rom_name, std::ios::binary);
-
-        if (!rom_file) {
-            std::cerr << "Could not open: " << rom_name << "\n";
-            continue;
+    std::string input;
+    std::cout << "Enter game name: ";
+    std::getline(std::cin, input);
+    std::string rom_name;
+    for (const auto& name : game_roms) {
+        if (to_lower(name).find(to_lower(input)) != std::string::npos) {
+            rom_name = name;
+            break;
         }
+    }
 
-        std::vector<uint8_t> rom_data{std::istreambuf_iterator<char>(rom_file),
-            std::istreambuf_iterator<char>()};
-        mem.loadRom(rom_data);
+    if (rom_name.empty()) {
+        std::cerr << "No match found!";
+        return 1;
+    }
 
-        int frames_after_done = 0;
+    Memory mem;
+    Cpu cpu(mem);
+    Ppu ppu(mem);
 
-        while (true) {
-            uint8_t cycles = cpu.step(); // cycling through the cpu opcodes
-            ppu.step(cycles); // cycling to get the ppu rendering
+    // change for debugging or testing purposes (game_path / blargg_cpu_instrs_test_path / ppu_test_path
+    //                                           blargg_cpu_instr_timing_path / blargg_cpu_mem_timing_path)
+    std::ifstream rom_file(game_path + rom_name, std::ios::binary);
 
-            if (frames_after_done > 60) {
-                /* check if the current test is done and
-                 * if so it breaks out of this inner
-                 * loop and moves to the next rom
-                 */
-                // to have time to output the result of the test
-                SDL_Delay(1000);
-                break;
-            }
+    if (!rom_file) {
+        std::cerr << "Could not open: " << rom_name << "\n";
+        return -1;
+    }
 
-            if (ppu.frame_ready) {
-                uint32_t pixels[144 * 160]; // the array containing the pixels
+    std::vector<uint8_t> rom_data{std::istreambuf_iterator<char>(rom_file),
+        std::istreambuf_iterator<char>()};
+    mem.loadRom(rom_data);
 
-                for (int y = 0; y < 144; y++)
-                    for (int x = 0; x < 160; x++)
-                        switch (ppu.framebuffer[y][x]) {
-                            /* mapping the values calculated in
-                             * the ppu to the actual colors to be displayed
-                             */
-                            case 0: {
-                                pixels[y * 160 + x] = 0xFF627102; // white (in reality green)
-                                break;
-                            }
-                            case 1: {
-                                pixels[y * 160 + x] = 0xFF4D5802; // light gray (darker shade of green)
-                                break;
-                            }
-                            case 2: {
-                                pixels[y * 160 + x] = 0xFF364002; // dark gray (even darker shade of green)
-                                break;
-                            }
-                            case 3: {
-                                pixels[y * 160 + x] = 0xFF1F2701; // black (darkest shade of green)
-                                break;
-                            }
+    while (true) {
+        uint8_t cycles = cpu.step(); // cycling through the cpu opcodes
+        ppu.step(cycles); // cycling to get the ppu rendering
+
+        if (ppu.frame_ready) {
+            uint32_t pixels[144 * 160]; // the array containing the pixels
+
+            for (int y = 0; y < 144; y++)
+                for (int x = 0; x < 160; x++)
+                    switch (ppu.framebuffer[y][x]) {
+                        /* mapping the values calculated in
+                         * the ppu to the actual colors to be displayed
+                         */
+                        case 0: {
+                            pixels[y * 160 + x] = 0xFF627102; // white (in reality green)
+                            break;
                         }
-
-                SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
-                SDL_RenderClear(renderer);
-                SDL_RenderCopy(renderer, gameboy_sprite, nullptr, nullptr);
-                SDL_RenderCopy(renderer, texture, nullptr, &screen_area);
-                SDL_RenderPresent(renderer);
-
-                // delay to make the tests running actually visible (i.e., frame pacing)
-                SDL_Delay(8);
-
-                ppu.frame_ready = false;
-                while (SDL_PollEvent(&event)) {
-                    if (event.type == SDL_QUIT)
-                        std::exit(0);
-                    if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
-                        bool pressed = (event.type == SDL_KEYDOWN);
-                        switch (event.key.keysym.sym) {
-                            case SDLK_UP:     mem.set_button(2, pressed); break;
-                            case SDLK_DOWN:   mem.set_button(3, pressed); break;
-                            case SDLK_RIGHT:  mem.set_button(0, pressed); break;
-                            case SDLK_LEFT:   mem.set_button(1, pressed); break;
-                            case SDLK_w:     mem.set_button(2, pressed); break;
-                            case SDLK_s:   mem.set_button(3, pressed); break;
-                            case SDLK_d:  mem.set_button(0, pressed); break;
-                            case SDLK_a:   mem.set_button(1, pressed); break;
-                            case SDLK_z:      mem.set_button(4, pressed); break;
-                            case SDLK_x:      mem.set_button(5, pressed); break;
-                            case SDLK_BACKSPACE: mem.set_button(6, pressed); break;
-                            case SDLK_RETURN:    mem.set_button(7, pressed); break;
+                        case 1: {
+                            pixels[y * 160 + x] = 0xFF4D5802; // light gray (darker shade of green)
+                            break;
                         }
+                        case 2: {
+                            pixels[y * 160 + x] = 0xFF364002; // dark gray (even darker shade of green)
+                            break;
+                        }
+                        case 3: {
+                            pixels[y * 160 + x] = 0xFF1F2701; // black (darkest shade of green)
+                            break;
+                        }
+                    }
+
+            SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, gameboy_sprite, nullptr, nullptr);
+            SDL_RenderCopy(renderer, texture, nullptr, &screen_area);
+            SDL_RenderPresent(renderer);
+
+            // delay to make the tests running actually visible (i.e., frame pacing)
+            SDL_Delay(8);
+
+            ppu.frame_ready = false;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT)
+                    std::exit(0);
+                if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                    bool pressed = (event.type == SDL_KEYDOWN);
+                    switch (event.key.keysym.sym) {
+                        case SDLK_UP:     mem.set_button(2, pressed); break;
+                        case SDLK_DOWN:   mem.set_button(3, pressed); break;
+                        case SDLK_RIGHT:  mem.set_button(0, pressed); break;
+                        case SDLK_LEFT:   mem.set_button(1, pressed); break;
+                        case SDLK_w:     mem.set_button(2, pressed); break;
+                        case SDLK_s:   mem.set_button(3, pressed); break;
+                        case SDLK_d:  mem.set_button(0, pressed); break;
+                        case SDLK_a:   mem.set_button(1, pressed); break;
+                        case SDLK_z:      mem.set_button(4, pressed); break;
+                        case SDLK_x:      mem.set_button(5, pressed); break;
+                        case SDLK_BACKSPACE: mem.set_button(6, pressed); break;
+                        case SDLK_RETURN:    mem.set_button(7, pressed); break;
                     }
                 }
             }
