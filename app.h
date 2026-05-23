@@ -36,6 +36,7 @@ private:
     std::unique_ptr<Cpu> cpu;
     std::unique_ptr<Ppu> ppu;
     std::vector<std::string> rom_list;
+    std::vector<std::string> rom_titles;
     int selected_rom;
     std::string rom_folder;
 
@@ -45,6 +46,8 @@ private:
     void render_menu();
     void render_game();
     void handle_events();
+    void setup_style();
+    std::string read_title(const std::string& filename);
 public:
     // constructor
     App();

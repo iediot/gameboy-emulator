@@ -26,6 +26,7 @@ App::App() : state(AppState::MENU), selected_rom(-1), rom_folder("../roms/game-r
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
+    setup_style();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
@@ -47,9 +48,12 @@ App::~App() {
 
 void App::scan_roms() {
     rom_list.clear();
+    rom_titles.clear();
     for (const auto& entry : std::filesystem::directory_iterator(rom_folder)) {
-        if (entry.path().extension() == ".gb")
+        if (entry.path().extension() == ".gb") {
             rom_list.push_back(entry.path().filename().string());
+            rom_titles.push_back(read_title(entry.path().filename().string()));
+        }
     }
 }
 
@@ -158,7 +162,58 @@ void App::render_game() {
     SDL_Delay(8);
 }
 
+void App::setup_style() {
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding    = 12.0f;
+    s.FrameRounding     = 8.0f;
+    s.GrabRounding      = 8.0f;
+    s.PopupRounding     = 8.0f;
+    s.ScrollbarRounding = 8.0f;
+    s.FramePadding  = ImVec2(14, 10);
+    s.ItemSpacing   = ImVec2(10, 10);
+    s.WindowPadding = ImVec2(20, 20);
+    s.FrameBorderSize = 0.0f;
+
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_WindowBg]      = ImVec4(0.09f, 0.10f, 0.06f, 1.00f);
+    c[ImGuiCol_Button]        = ImVec4(0.24f, 0.28f, 0.02f, 1.00f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.34f, 0.40f, 0.02f, 1.00f);
+    c[ImGuiCol_ButtonActive]  = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
+    c[ImGuiCol_Text]          = ImVec4(0.90f, 0.93f, 0.78f, 1.00f);
+    c[ImGuiCol_TitleBg]       = ImVec4(0.12f, 0.14f, 0.02f, 1.00f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
+}
+
+std::string App::read_title(const std::string& filename) {
+    std::ifstream file(rom_folder + filename, std::ios::binary);
+    if (!file) {
+        return filename;
+    }
+    file.seekg(0x0134);
+    char buffer[17] = {};
+    file.read(buffer, 16);
+    std::string title(buffer);
+    if (title.empty())
+        return filename;
+    return title;
+}
+
 void App::render_menu() {
-    if (!rom_list.empty())
-        load_rom(rom_list[0]);
+    ImGui_ImplSDLRenderer2_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(600, 1000));
+    ImGui::Begin("gameboy-emu", nullptr,
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+    for (size_t i = 0; i < rom_list.size(); i++) {
+        if (ImGui::Button(rom_titles[i].c_str(), ImVec2(-1, 0)))
+            load_rom(rom_list[i]);
+    }
+    ImGui::End();
+    ImGui::Render();
+    SDL_RenderClear(renderer);
+    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+    SDL_RenderPresent(renderer);
 }
