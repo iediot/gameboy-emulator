@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <cctype>
 #include "app.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -38,6 +39,10 @@ App::~App() {
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    // cover list cleanup
+    for (SDL_Texture* cover : cover_list)
+        if (cover)
+            SDL_DestroyTexture(cover);
     // sdl
     SDL_DestroyTexture(texture);
     SDL_DestroyTexture(gameboy_sprite);
@@ -48,11 +53,15 @@ App::~App() {
 
 void App::scan_roms() {
     rom_list.clear();
-    rom_titles.clear();
+    cover_list.clear();
     for (const auto& entry : std::filesystem::directory_iterator(rom_folder)) {
         if (entry.path().extension() == ".gb") {
             rom_list.push_back(entry.path().filename().string());
-            rom_titles.push_back(read_title(entry.path().filename().string()));
+            std::string path = closest_artwork(entry.path().stem().string());
+            if (path.empty())
+                cover_list.push_back(nullptr);
+            else
+                cover_list.push_back(IMG_LoadTexture(renderer, path.c_str()));
         }
     }
 }
@@ -184,18 +193,46 @@ void App::setup_style() {
     c[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
 }
 
-std::string App::read_title(const std::string& filename) {
-    std::ifstream file(rom_folder + filename, std::ios::binary);
-    if (!file) {
-        return filename;
+std::string App::normalize(std::string s) {
+    std::string out;
+    int depth = 0;
+    for (char ch : s) {
+        if (ch == '(' || ch == '[') { depth++; continue; }
+        if (ch == ')' || ch == ']') { if (depth > 0) depth--; continue; }
+        if (depth > 0) continue;
+        if (std::isalnum(static_cast<unsigned char>(ch)))
+            out += std::tolower(static_cast<unsigned char>(ch));
     }
-    file.seekg(0x0134);
-    char buffer[17] = {};
-    file.read(buffer, 16);
-    std::string title(buffer);
-    if (title.empty())
-        return filename;
-    return title;
+    return out;
+}
+
+std::string App::closest_artwork(const std::string& rom_name) {
+    std::string target = normalize(rom_name);
+    std::string best_path;
+    size_t best_score = std::string::npos;
+
+    for (const auto& entry : std::filesystem::directory_iterator("../artworks/")) {
+        if (entry.path().extension() != ".png") continue;
+
+        std::string cand = normalize(entry.path().stem().string());
+        if (cand.empty()) continue;
+
+        if (cand == target)
+            return entry.path().string();           // exact, done
+
+        // accept only if one contains the other; score by length difference
+        if (cand.find(target) != std::string::npos ||
+            target.find(cand) != std::string::npos) {
+            size_t score = (cand.size() > target.size())
+                         ? cand.size() - target.size()
+                         : target.size() - cand.size();
+            if (score < best_score) {
+                best_score = score;
+                best_path = entry.path().string();
+            }
+            }
+    }
+    return best_path;   // empty string if nothing matched
 }
 
 void App::render_menu() {
@@ -208,8 +245,18 @@ void App::render_menu() {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
     for (size_t i = 0; i < rom_list.size(); i++) {
-        if (ImGui::Button(rom_titles[i].c_str(), ImVec2(-1, 0)))
+        bool clicked;
+        if (cover_list[i])
+            clicked = ImGui::ImageButton(rom_list[i].c_str(),
+                                         (ImTextureID)cover_list[i],
+                                         ImVec2(120, 120));
+        else
+            clicked = ImGui::Button(rom_list[i].c_str(), ImVec2(-1, 0));
+
+        if (clicked)
             load_rom(rom_list[i]);
+
+        ImGui::SameLine();
     }
     ImGui::End();
     ImGui::Render();

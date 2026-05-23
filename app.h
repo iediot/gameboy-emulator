@@ -36,18 +36,19 @@ private:
     std::unique_ptr<Cpu> cpu;
     std::unique_ptr<Ppu> ppu;
     std::vector<std::string> rom_list;
-    std::vector<std::string> rom_titles;
+    std::vector<SDL_Texture*> cover_list;
     int selected_rom;
     std::string rom_folder;
 
     // private methods
     void scan_roms();
     void load_rom(const std::string& name);
-    void render_menu();
     void render_game();
     void handle_events();
     void setup_style();
-    std::string read_title(const std::string& filename);
+    std::string normalize(std::string s);
+    std::string closest_artwork(const std::string& rom_name);
+    void render_menu();
 public:
     // constructor
     App();
