@@ -279,7 +279,6 @@ void App::render_menu() {
         else
             clicked = ImGui::Button(rom_list[i].c_str(), ImVec2(140, 140));
 
-        ImGui::Text("%s", rom_list[i].c_str());
         ImGui::EndGroup();
 
         if (clicked)
