@@ -9,7 +9,6 @@
 #include <vector>
 #include <string>
 
-
 class Memory {
 private:
     std::array<uint8_t, 0x10000> data{};
@@ -32,6 +31,5 @@ public:
     void write(uint16_t address, uint8_t value);
     void loadRom(const std::vector<uint8_t>& rom_to_load);
 };
-
 
 #endif //GAMEBOY_EMU_MEMORY_H

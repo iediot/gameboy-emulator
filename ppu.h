@@ -50,5 +50,4 @@ public:
     void step(uint8_t cycles);
 };
 
-
 #endif //GAMEBOY_EMU_PPU_H

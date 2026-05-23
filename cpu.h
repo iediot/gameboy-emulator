@@ -5,10 +5,8 @@
 #ifndef GAMEBOY_EMU_CPU_H
 #define GAMEBOY_EMU_CPU_H
 
-
 #include <cstdint>
 #include "memory.h"
-
 
 class Cpu {
 private:
@@ -81,6 +79,5 @@ public:
     // Main loop
     uint8_t step();
 };
-
 
 #endif //GAMEBOY_EMU_CPU_H
