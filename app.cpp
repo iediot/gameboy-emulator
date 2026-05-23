@@ -12,6 +12,7 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
+// constructor
 App::App() : state(AppState::MENU), selected_rom(-1), rom_folder("../roms/game-roms/") {
     // sdl
     SDL_Init(SDL_INIT_VIDEO);
@@ -34,6 +35,7 @@ App::App() : state(AppState::MENU), selected_rom(-1), rom_folder("../roms/game-r
     scan_roms();
 }
 
+// destructor
 App::~App() {
     // imgui
     ImGui_ImplSDLRenderer2_Shutdown();
@@ -51,6 +53,7 @@ App::~App() {
     SDL_Quit();
 }
 
+// find the games inside the game path and the closest matching cover for each
 void App::scan_roms() {
     rom_list.clear();
     cover_list.clear();
@@ -66,7 +69,9 @@ void App::scan_roms() {
     }
 }
 
+// loads the rom, moved from main
 void App::load_rom(const std::string& name) {
+    // rebuild the emulator
     mem = std::make_unique<Memory>();
     cpu = std::make_unique<Cpu>(*mem);
     ppu = std::make_unique<Ppu>(*mem);
@@ -83,6 +88,7 @@ void App::load_rom(const std::string& name) {
     state = AppState::PLAYING;
 }
 
+// run the cpu and ppu in lockstep
 void App::run() {
     while (true) {
         handle_events();
@@ -101,6 +107,7 @@ void App::run() {
     }
 }
 
+// handler for the input and sdl window elements
 void App::handle_events() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -118,7 +125,7 @@ void App::handle_events() {
             continue;
             }
 
-        // joypad only while playing
+        // map the keybinds to the 8 joypad bits
         if (state == AppState::PLAYING &&
             (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)) {
             bool pressed = (event.type == SDL_KEYDOWN);
@@ -152,15 +159,21 @@ void App::handle_events() {
     }
 }
 
+// the renderer of the games inside the actual emulator
 void App::render_game() {
     uint32_t pixels[144 * 160];
     for (int y = 0; y < 144; y++)
         for (int x = 0; x < 160; x++)
+            // the palette is some kind of olive for a more nostalgic feeling
             switch (ppu->framebuffer[y][x]) {
-        case 0: pixels[y * 160 + x] = 0xFF627102; break;
-        case 1: pixels[y * 160 + x] = 0xFF4D5802; break;
-        case 2: pixels[y * 160 + x] = 0xFF364002; break;
-        case 3: pixels[y * 160 + x] = 0xFF1F2701; break;
+                case 0:
+                    pixels[y * 160 + x] = 0xFF627102; break; // darkest shade
+                case 1:
+                    pixels[y * 160 + x] = 0xFF4D5802; break; // slightly lighter shade
+                case 2:
+                    pixels[y * 160 + x] = 0xFF364002; break; // lighter shade
+                case 3:
+                    pixels[y * 160 + x] = 0xFF1F2701; break; // light shade
             }
 
     SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
@@ -171,6 +184,7 @@ void App::render_game() {
     SDL_Delay(8);
 }
 
+// styling for the menu part
 void App::setup_style() {
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowRounding    = 12.0f;
@@ -193,6 +207,7 @@ void App::setup_style() {
     c[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
 }
 
+// reduce a name to lower letters dropping parenthesis and such
 std::string App::normalize(std::string s) {
     std::string out;
     int depth = 0;
@@ -206,6 +221,7 @@ std::string App::normalize(std::string s) {
     return out;
 }
 
+// finds the closest match to the normalized rom name
 std::string App::closest_artwork(const std::string& rom_name) {
     std::string target = normalize(rom_name);
     std::string best_path;
@@ -244,20 +260,38 @@ void App::render_menu() {
     ImGui::Begin("gameboy-emu", nullptr,
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+
+    ImGui::Text("gameboy-emu");
+    ImGui::Separator();
+
+    ImGui::BeginChild("game_list");
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(28, 10));
+    float window_right = ImGui::GetWindowContentRegionMax().x;
     for (size_t i = 0; i < rom_list.size(); i++) {
+        ImGui::BeginGroup();
+
         bool clicked;
         if (cover_list[i])
             clicked = ImGui::ImageButton(rom_list[i].c_str(),
                                          (ImTextureID)cover_list[i],
-                                         ImVec2(120, 120));
+                                         ImVec2(140, 140));
         else
-            clicked = ImGui::Button(rom_list[i].c_str(), ImVec2(-1, 0));
+            clicked = ImGui::Button(rom_list[i].c_str(), ImVec2(140, 140));
+
+        ImGui::Text("%s", rom_list[i].c_str());
+        ImGui::EndGroup();
 
         if (clicked)
             load_rom(rom_list[i]);
 
-        ImGui::SameLine();
+        float next_x = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + 120;
+        if (next_x < window_right)
+            ImGui::SameLine();
     }
+    ImGui::PopStyleVar();
+
+    ImGui::EndChild();
     ImGui::End();
     ImGui::Render();
     SDL_RenderClear(renderer);
