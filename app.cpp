@@ -141,8 +141,10 @@ void App::render_game() {
 void App::handle_events() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        // let imgui see every event
-        ImGui_ImplSDL2_ProcessEvent(&event);
+        // DON'T let imgui see every event
+        // imgui should only see input when in menu mode
+        if (state == AppState::MENU)
+            ImGui_ImplSDL2_ProcessEvent(&event);
 
         if (event.type == SDL_QUIT)
             std::exit(0);
