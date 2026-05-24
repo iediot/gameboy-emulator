@@ -7,6 +7,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <nfd.h>
 #include "app.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
@@ -31,6 +32,8 @@ App::App() : state(AppState::MENU), selected_rom(-1), rom_folder("../roms/game-r
     setup_style();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+    // nfd
+    NFD_Init();
 
     scan_roms();
 }
@@ -45,6 +48,8 @@ App::~App() {
     for (SDL_Texture* cover : cover_list)
         if (cover)
             SDL_DestroyTexture(cover);
+    // nfd
+    NFD_Quit();
     // sdl
     SDL_DestroyTexture(texture);
     SDL_DestroyTexture(gameboy_sprite);
@@ -290,9 +295,10 @@ void App::render_menu() {
     ImGui::Text("gameboy-emu");
     ImGui::Separator();
 
+    // game list buttons
     ImGui::BeginChild("game_list");
 
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(28, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(15, 10));
     float window_right = ImGui::GetWindowContentRegionMax().x;
     for (size_t i = 0; i < rom_list.size(); i++) {
         ImGui::BeginGroup();
@@ -317,7 +323,46 @@ void App::render_menu() {
     }
     ImGui::PopStyleVar();
 
+    // add game button
+    ImGui::BeginGroup();
+    // get the 'add button' top left position to know where to place the + sign
+    ImVec2 cursor = ImGui::GetCursorScreenPos();
+    // ## hides the label
+    bool add_clicked = ImGui::Button("##add", ImVec2(160, 160));
+
+    ImGui::PushFont(nullptr);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const char* plus = "+";
+    float plus_scale = 7.0f;
+    ImVec2 plus_size = ImGui::CalcTextSize(plus);
+    // draw the + manually so it sits in the center
+    dl->AddText(ImGui::GetFont(),
+                ImGui::GetFontSize() * plus_scale,
+                ImVec2(cursor.x + (160 - plus_size.x * plus_scale) * 0.5f,
+                       cursor.y + (160 - plus_size.y * plus_scale) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text),
+                plus);
+    ImGui::PopFont();
+
+    ImGui::Text("Add Game");
+    ImGui::EndGroup();
+
+    if (add_clicked) {
+        // open the file explorer filtered to .gb files
+        nfdchar_t* path = nullptr;
+        nfdfilteritem_t filter[1] = {{"Game Boy ROM", "gb"}};
+        if (NFD_OpenDialog(&path, filter, 1, nullptr) == NFD_OKAY) {
+            // copy the rom into the games folder then rescan to show up with the cover art
+            std::filesystem::copy_file(path,
+                rom_folder + std::filesystem::path(path).filename().string(),
+                std::filesystem::copy_options::overwrite_existing);
+            NFD_FreePath(path);
+            scan_roms();
+        }
+    }
+
     ImGui::EndChild();
+
     ImGui::End();
     ImGui::Render();
     SDL_RenderClear(renderer);
