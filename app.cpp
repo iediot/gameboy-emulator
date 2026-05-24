@@ -53,6 +53,25 @@ App::~App() {
     SDL_Quit();
 }
 
+// run the cpu and ppu in lockstep
+void App::run() {
+    while (true) {
+        handle_events();
+
+        if (state == AppState::PLAYING) {
+            // step until a frame is ready
+            while (!ppu->frame_ready) {
+                uint8_t cycles = cpu->step();
+                ppu->step(cycles);
+            }
+            ppu->frame_ready = false;
+            render_game();
+        } else {
+            render_menu();
+        }
+    }
+}
+
 // find the games inside the game path and the closest matching cover for each
 void App::scan_roms() {
     rom_list.clear();
@@ -88,23 +107,29 @@ void App::load_rom(const std::string& name) {
     state = AppState::PLAYING;
 }
 
-// run the cpu and ppu in lockstep
-void App::run() {
-    while (true) {
-        handle_events();
+// the renderer of the games inside the actual emulator
+void App::render_game() {
+    uint32_t pixels[144 * 160];
+    for (int y = 0; y < 144; y++)
+        for (int x = 0; x < 160; x++)
+            // the palette is some kind of olive for a more nostalgic feeling
+                switch (ppu->framebuffer[y][x]) {
+        case 0:
+                    pixels[y * 160 + x] = 0xFF627102; break; // darkest shade
+        case 1:
+                    pixels[y * 160 + x] = 0xFF4D5802; break; // slightly lighter shade
+        case 2:
+                    pixels[y * 160 + x] = 0xFF364002; break; // lighter shade
+        case 3:
+                    pixels[y * 160 + x] = 0xFF1F2701; break; // light shade
+                }
 
-        if (state == AppState::PLAYING) {
-            // step until a frame is ready
-            while (!ppu->frame_ready) {
-                uint8_t cycles = cpu->step();
-                ppu->step(cycles);
-            }
-            ppu->frame_ready = false;
-            render_game();
-        } else {
-            render_menu();
-        }
-    }
+    SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
+    SDL_RenderClear(renderer);
+    SDL_RenderCopy(renderer, gameboy_sprite, nullptr, nullptr);
+    SDL_RenderCopy(renderer, texture, nullptr, &screen_area);
+    SDL_RenderPresent(renderer);
+    SDL_Delay(8);
 }
 
 // handler for the input and sdl window elements
@@ -157,31 +182,6 @@ void App::handle_events() {
             }
         }
     }
-}
-
-// the renderer of the games inside the actual emulator
-void App::render_game() {
-    uint32_t pixels[144 * 160];
-    for (int y = 0; y < 144; y++)
-        for (int x = 0; x < 160; x++)
-            // the palette is some kind of olive for a more nostalgic feeling
-            switch (ppu->framebuffer[y][x]) {
-                case 0:
-                    pixels[y * 160 + x] = 0xFF627102; break; // darkest shade
-                case 1:
-                    pixels[y * 160 + x] = 0xFF4D5802; break; // slightly lighter shade
-                case 2:
-                    pixels[y * 160 + x] = 0xFF364002; break; // lighter shade
-                case 3:
-                    pixels[y * 160 + x] = 0xFF1F2701; break; // light shade
-            }
-
-    SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, gameboy_sprite, nullptr, nullptr);
-    SDL_RenderCopy(renderer, texture, nullptr, &screen_area);
-    SDL_RenderPresent(renderer);
-    SDL_Delay(8);
 }
 
 // styling for the menu part
@@ -251,6 +251,32 @@ std::string App::closest_artwork(const std::string& rom_name) {
     return best_path;   // empty string if nothing matched
 }
 
+// turns the file name into a formatted displayable name for the menu ui
+std::string App::display_name(const std::string& s) {
+    std::string out;
+    int depth = 0;
+    for (char ch : s) {
+        if (ch == '(' || ch == '[') { depth++; continue; }
+        if (ch == ')' || ch == ']') { if (depth > 0) depth--; continue; }
+        if (depth > 0) continue;
+        out += ch;
+    }
+
+    // drop a trailing gb extension if present
+    if (out.size() >= 3 && out.substr(out.size() - 3) == ".gb")
+        out.erase(out.size() - 3);
+
+    // trim trailing spaces left behind by removed tags
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+
+    // cap length adding ... when truncated
+    if (out.size() > 21)
+        out = out.substr(0, 21) + "...";
+
+    return out;
+}
+
 void App::render_menu() {
     ImGui_ImplSDLRenderer2_NewFrame();
     ImGui_ImplSDL2_NewFrame();
@@ -279,6 +305,7 @@ void App::render_menu() {
         else
             clicked = ImGui::Button(rom_list[i].c_str(), ImVec2(140, 140));
 
+        ImGui::Text("%s", display_name(rom_list[i]).c_str());
         ImGui::EndGroup();
 
         if (clicked)

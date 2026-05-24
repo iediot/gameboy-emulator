@@ -48,6 +48,7 @@ private:
     void setup_style();
     std::string normalize(std::string s);
     std::string closest_artwork(const std::string& rom_name);
+    std::string display_name(const std::string& s);
     void render_menu();
 public:
     // constructor
