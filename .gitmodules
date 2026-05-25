@@ -1,3 +1,9 @@
 [submodule "roms/test-roms"]
 	path = roms/test-roms
 	url = https://github.com/retrio/gb-test-roms.git
+[submodule "external/imgui"]
+	path = external/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "external/nativefiledialog-extended"]
+	path = external/nativefiledialog-extended
+	url = https://github.com/btzy/nativefiledialog-extended.git
