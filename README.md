@@ -26,7 +26,7 @@ A Game Boy (DMG) emulator written from scratch in C++.
 Requires SDL2, SDL2_image, and CMake. The UI and file-picker dependencies are pulled in as git submodules, so clone recursively:
 
 ```bash
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules [<repo-url>](https://github.com/iediot/gameboy-emulator.git)
 ```
 
 If you already cloned without submodules:
