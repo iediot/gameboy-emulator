@@ -9,6 +9,15 @@
 #include <vector>
 #include <string>
 
+enum class MbcType {
+    NONE,
+    MBC1,
+    MBC2,
+    MBC3,
+    MBC4,
+    MBC5
+};
+
 class Memory {
 private:
     std::array<uint8_t, 0x10000> data{};
@@ -23,9 +32,13 @@ public:
     std::string serial_buffer;
 
     std::vector<uint8_t> rom;
-    uint8_t rom_bank = 1;
-    uint8_t mbc_type = 0;
+    uint16_t rom_bank = 1;
+    uint8_t mbc = 0;
+    MbcType mbc_type;
 
+    void write_mbc1(uint16_t address, uint8_t value);
+    void write_mbc3(uint16_t address, uint8_t value);
+    void write_mbc5(uint16_t address, uint8_t value);
     void sync_div(uint8_t value);
     uint8_t read(uint16_t address);
     void write(uint16_t address, uint8_t value);

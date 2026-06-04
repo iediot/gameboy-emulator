@@ -5,6 +5,33 @@
 #include <iostream>
 #include "memory.h"
 
+void Memory::write_mbc1(uint16_t address, uint8_t value) {
+    if (address >= 0x2000 && address <= 0x3FFF) {
+        rom_bank = value & 0x1F;
+        // mbc1 can't write to bank 0 so map to 1
+        if (rom_bank == 0)
+            rom_bank = 1;
+    }
+}
+
+void Memory::write_mbc3(uint16_t address, uint8_t value) {
+    if (address >= 0x2000 && address <= 0x3FFF) {
+        rom_bank = value & 0x7F;
+        // mbc3 can't either
+        if (rom_bank == 0)
+            rom_bank = 1;
+    }
+}
+
+void Memory::write_mbc5(uint16_t address, uint8_t value) {
+    if (address >= 0x2000 && address <= 0x2FFF) { // keep bit 9 set low 8
+        rom_bank = (rom_bank & 0x100) | value;
+    }
+    else if (address >= 0x3000 && address <= 0x3FFF) { // keep low 8 set bit 9
+        rom_bank = (rom_bank & 0xFF) | ((value & 0x01) << 8);
+    }
+}
+
 void Memory::set_button(int button, bool pressed) {
     if (pressed)
         button_state &= ~(1 << button);
@@ -24,7 +51,9 @@ uint8_t Memory::read(uint16_t address)
     }
     // this is the switchable bank
     if (address >= 0x4000 && address <= 0x7FFF) {
-        return rom[rom_bank * 0x4000 + (address - 0x4000)];
+        size_t num_banks = rom.size() / 0x4000;
+        uint16_t effective_bank = rom_bank % num_banks;
+        return rom[effective_bank * 0x4000 + (address - 0x4000)];
     }
     // address for input
     if (address == 0xFF00) {
@@ -52,12 +81,14 @@ uint8_t Memory::read(uint16_t address)
 }
 
 void Memory::write(uint16_t address, uint8_t value) {
-    // writing here selects the lower 5 bits
-    if (address >= 0x2000 && address <= 0x3FFF) {
-        rom_bank = value & 0x1F;
-        // mbc1 can't write to bank 0 so map to 1
-        if (rom_bank == 0)
-            rom_bank = 1;
+    if (address < 0x8000) {
+        switch (mbc_type) {
+            case MbcType::MBC1: write_mbc1(address, value); break;
+            case MbcType::MBC3: write_mbc3(address, value); break;
+            case MbcType::MBC5: write_mbc5(address, value); break;
+            // NONE and MBC2 means ignoring cartridge writes
+            default: break;
+        }
         return;
     }
 
@@ -98,5 +129,18 @@ void Memory::write(uint16_t address, uint8_t value) {
 
 void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
     rom = rom_to_load;
-    mbc_type = rom[0x0147];
+    mbc = rom[0x0147];
+
+    if (mbc == 0x00)
+        mbc_type = MbcType::NONE;
+    else if (mbc >= 0x01 && mbc <= 0x03)
+        mbc_type = MbcType::MBC1;
+    else if (mbc >= 0x05 && mbc <= 0x06)
+        mbc_type = MbcType::MBC2;
+    else if (mbc >= 0x0F && mbc <= 0x13)
+        mbc_type = MbcType::MBC3;
+    else if (mbc >= 0x19 && mbc <= 0x1E)
+        mbc_type = MbcType::MBC5;
+    else
+        mbc_type = MbcType::NONE;
 }
