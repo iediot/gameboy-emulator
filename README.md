@@ -18,12 +18,24 @@ A Game Boy (DMG) emulator written from scratch in C++.
 - **DMA** — OAM transfer via `0xFF46`.
 - **Cartridges** — MBC1 ROM bank switching. Runs Tetris, Dr. Mario, Kirby's Dream Land, Super Mario Land, and others.
 - **Input** — joypad mapped to the keyboard via SDL2.
-- **Menu** — Dear ImGui launcher with a scrollable cover-art grid; games are matched to box art by name.
+- **Menu** — Dear ImGui launcher with a scrollable cover-art grid; games are matched to box art by name. Add new ROMs through a native file picker.
 - **Display** — SDL2 frontend, scaled output rendered inside a Game Boy chrome sprite.
 
 ## Build
 
-Requires SDL2, SDL2_image, and CMake.
+Requires SDL2, SDL2_image, and CMake. The UI and file-picker dependencies are pulled in as git submodules, so clone recursively:
+
+```bash
+git clone --recurse-submodules https://github.com/iediot/gameboy-emulator.git
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+Then build:
 
 ```bash
 mkdir build && cd build
@@ -31,8 +43,6 @@ cmake ..
 make
 ./gameboy_emu
 ```
-
-Drop `.gb` files into `roms/game-roms/` and they'll show up in the launcher. Click a cover to play, press Escape to go back to the menu.
 
 ## Controls
 
@@ -51,5 +61,4 @@ Drop `.gb` files into `roms/game-roms/` and they'll show up in the launcher. Cli
 - MBC3 / MBC5 support (Pokémon, later games)
 - APU (audio)
 - Save states
-- "Add Game" file picker in the launcher
 - iOS support
