@@ -32,7 +32,15 @@ public:
     std::string serial_buffer;
 
     std::vector<uint8_t> rom;
+
+    uint8_t banking_mode = 0;
     uint16_t rom_bank = 1;
+    uint8_t upper_bank = 0;
+
+    std::vector<uint8_t> external_ram;
+    bool ram_enabled = false;
+    uint8_t ram_bank = 0;
+
     uint8_t mbc = 0;
     MbcType mbc_type;
 

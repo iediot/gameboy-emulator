@@ -6,24 +6,47 @@
 #include "memory.h"
 
 void Memory::write_mbc1(uint16_t address, uint8_t value) {
+    if (address >= 0x0000 && address <= 0x1FFF) {
+        // ram enabled if the low nibble of value is 0xA
+        ram_enabled = ((value & 0x0F) == 0x0A);
+    }
+
     if (address >= 0x2000 && address <= 0x3FFF) {
         rom_bank = value & 0x1F;
-        // mbc1 can't write to bank 0 so map to 1
         if (rom_bank == 0)
             rom_bank = 1;
+    }
+
+    if (address >= 0x4000 && address <= 0x5FFF) {
+        upper_bank = value & 0x03;
+    }
+
+    if (address >= 0x6000 && address <= 0x7FFF) {
+        banking_mode = value & 0x01;
     }
 }
 
 void Memory::write_mbc3(uint16_t address, uint8_t value) {
+    if (address >= 0x0000 && address <= 0x1FFF) {
+        ram_enabled = ((value & 0x0F) == 0x0A);
+    }
     if (address >= 0x2000 && address <= 0x3FFF) {
         rom_bank = value & 0x7F;
         // mbc3 can't either
         if (rom_bank == 0)
             rom_bank = 1;
     }
+    if (address >= 0x4000 && address <= 0x5FFF) {
+        if (value <= 0x03)
+            ram_bank = value;
+        // values 0x08-0x0C select RTC registers defer
+    }
 }
 
 void Memory::write_mbc5(uint16_t address, uint8_t value) {
+    if (address >= 0x4000 && address <= 0x5FFF) {
+        ram_bank = value & 0x0F;  // MBC5 supports up to 16 RAM banks
+    }
     if (address >= 0x2000 && address <= 0x2FFF) { // keep bit 9 set low 8
         rom_bank = (rom_bank & 0x100) | value;
     }
@@ -49,12 +72,28 @@ uint8_t Memory::read(uint16_t address)
     if (address >= 0x0000 && address <= 0x3FFF) {
         return rom[address];
     }
+
     // this is the switchable bank
     if (address >= 0x4000 && address <= 0x7FFF) {
+        uint16_t effective_bank = (upper_bank << 5) | (rom_bank & 0x1F);
         size_t num_banks = rom.size() / 0x4000;
-        uint16_t effective_bank = rom_bank % num_banks;
+        effective_bank %= num_banks;
         return rom[effective_bank * 0x4000 + (address - 0x4000)];
     }
+
+    // addresses for ram banking
+    if (address >= 0xA000 && address <= 0xBFFF) {
+        if (!ram_enabled || external_ram.empty())
+            return 0xFF;
+        uint8_t bank;
+        if (mbc_type == MbcType::MBC1)
+            bank = (banking_mode == 1) ? upper_bank : 0;
+        else
+            bank = ram_bank;
+        size_t offset = bank * 0x2000 + (address - 0xA000);
+        return external_ram[offset];
+    }
+
     // address for input
     if (address == 0xFF00) {
         uint8_t joyp_byte = data[0xFF00];
@@ -77,6 +116,7 @@ uint8_t Memory::read(uint16_t address)
 
         return result;
     }
+
     return data[address];
 }
 
@@ -89,6 +129,20 @@ void Memory::write(uint16_t address, uint8_t value) {
             // NONE and MBC2 means ignoring cartridge writes
             default: break;
         }
+        return;
+    }
+
+    // cartridge external ram only writable when enabled
+    if (address >= 0xA000 && address <= 0xBFFF) {
+        if (!ram_enabled || external_ram.empty())
+            return;
+        uint8_t bank;
+        if (mbc_type == MbcType::MBC1)
+            bank = (banking_mode == 1) ? upper_bank : 0;
+        else
+            bank = ram_bank;
+        size_t offset = bank * 0x2000 + (address - 0xA000);
+        external_ram[offset] = value;
         return;
     }
 
@@ -130,6 +184,16 @@ void Memory::write(uint16_t address, uint8_t value) {
 void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
     rom = rom_to_load;
     mbc = rom[0x0147];
+    uint8_t ram_size = rom[0x0149]; // ram size code
+    switch (ram_size) {
+        case 0: external_ram.resize(0 * 1024); break; // no ram
+        // the following are in kb so that's the 1024
+        case 1: external_ram.resize(2 * 1024); break; // rare quarter of a bank
+        case 2: external_ram.resize(8 * 1024); break; // one bank
+        case 3: external_ram.resize(32 * 1024); break; // 4 banks
+        case 4: external_ram.resize(128 * 1024); break; // 16 banks
+        case 5: external_ram.resize(64 * 1024); break; // 8 banks
+    }
 
     if (mbc == 0x00)
         mbc_type = MbcType::NONE;
