@@ -7,13 +7,15 @@
 
 #include <cstdint>
 #include "memory.h"
+#include "ppu.h"
 
 class Cpu {
 private:
     Memory& mem;
 public:
     // Constructor
-    Cpu(Memory& memory);
+    Cpu(Memory& memory, Ppu& ppu);
+    Ppu& ppu;
 
     // Registers
     uint8_t A = 0;
@@ -35,13 +37,16 @@ public:
 
     // Interrupts
     bool IME = false;
-    bool ime_pending = false;
+    uint8_t ime_pending = 0;
     bool halted = false;
 
     // Timer
-    uint16_t internal_div = 0;
+    uint16_t internal_div = 0xABCC;
     bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
     void tick(uint8_t cycles);
+
+    uint8_t read_and_tick(uint16_t address);
+    void write_and_tick(uint16_t address, uint8_t value);
 
     // Helpers
     void set_flag(uint8_t flag, bool value);

@@ -68,16 +68,28 @@ void Memory::sync_div(uint8_t value) {
 
 uint8_t Memory::read(uint16_t address)
 {
-    // bank 0 is in between these addresses
+    // bank 0
     if (address >= 0x0000 && address <= 0x3FFF) {
-        return rom[address];
+        uint16_t bank = 0;
+        if (mbc_type == MbcType::MBC1 && banking_mode == 1)
+            bank = (upper_bank << 5);
+        size_t num_banks = rom.size() / 0x4000;
+        if (num_banks > 0)
+            bank %= num_banks;
+        return rom[bank * 0x4000 + address];
     }
 
     // this is the switchable bank
     if (address >= 0x4000 && address <= 0x7FFF) {
-        uint16_t effective_bank = (upper_bank << 5) | (rom_bank & 0x1F);
+        uint16_t effective_bank;
+        if (mbc_type == MbcType::MBC1)
+            effective_bank = (upper_bank << 5) | (rom_bank & 0x1F);
+        else
+            effective_bank = rom_bank;  // MBC3 and MBC5 use rom_bank directly
+
         size_t num_banks = rom.size() / 0x4000;
-        effective_bank %= num_banks;
+        if (num_banks > 0)
+            effective_bank %= num_banks;
         return rom[effective_bank * 0x4000 + (address - 0x4000)];
     }
 

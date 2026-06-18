@@ -5,7 +5,7 @@
 #include <iostream>
 #include "cpu.h"
 
-Cpu::Cpu(Memory& memory) : mem(memory) {
+Cpu::Cpu(Memory& memory, Ppu& ppu_ref) : mem(memory), ppu(ppu_ref) {
     A = 0x01;
     F = 0xB0;
     B = 0x00;
@@ -187,29 +187,30 @@ void Cpu::cp(uint8_t value) { // helper for the 'cp' (compare) operation
 }
 
 void Cpu::ret() { // helper for 'ret' operation
-    uint8_t low = mem.read(SP);
+    uint8_t low = read_and_tick(SP);
     SP++;
-    uint8_t high = mem.read(SP);
+    uint8_t high = read_and_tick(SP);
     SP++;
     PC = combine(high, low);
 }
 
 void Cpu::rst(uint16_t address) { // helper for the 'rst' (reset) operation
     SP--;
-    mem.write(SP, (PC >> 8) & 0xFF);
+    write_and_tick(SP, (PC >> 8) & 0xFF);
     SP--;
-    mem.write(SP, PC & 0xFF);
+    write_and_tick(SP, PC & 0xFF);
     PC = address;
 }
 
 void Cpu::call() { // helper for the 'call' operation
-    uint8_t low = mem.read(PC);
-    uint8_t high = mem.read(PC + 1);
+    tick(4);
+    uint8_t low = read_and_tick(PC);
+    uint8_t high = read_and_tick(PC + 1);
     PC += 2;
     SP--;
-    mem.write(SP, (PC >> 8) & 0xFF);
+    write_and_tick(SP, (PC >> 8) & 0xFF);
     SP--;
-    mem.write(SP, PC & 0xFF);
+    write_and_tick(SP, PC & 0xFF);
     PC = combine(high, low);
 }
 
@@ -372,14 +373,23 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
             }
         }
         last_and_result = and_result;
+        ppu.step(1);
         cycles--;
     }
 }
 
+uint8_t Cpu::read_and_tick(uint16_t address) {
+    tick(4);
+    return mem.read(address);
+}
+
+void Cpu::write_and_tick(uint16_t address, uint8_t value) {
+    tick(4);
+    mem.write(address, value);
+}
+
 uint8_t Cpu::step() {
     uint8_t cb_opcode = 0;
-    // tick for the opcodes that require a different timing based on operation (e.g. JR, CALL, etc.)
-    uint8_t conditional_cycles = 0;
 
     if (halted == true) {
         if (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F)
@@ -391,6 +401,7 @@ uint8_t Cpu::step() {
     }
 
     if (IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F) != 0) {
+        tick(8);
         uint8_t pending = mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F;
 
         if (pending & 0x01) {
@@ -414,11 +425,9 @@ uint8_t Cpu::step() {
             IME = false;
             rst(0x60);
         }
-
-        return 0;
     }
 
-    uint8_t opcode = mem.read(PC);
+    uint8_t opcode = read_and_tick(PC);
     PC++;
 
     switch (opcode)
@@ -427,19 +436,20 @@ uint8_t Cpu::step() {
         break;
 
     case 0x01: { // LD BC, d16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             set_bc(combine(high, low));
             PC += 2;
             break;
         }
 
     case 0x02: { // LD (BC), A
-            mem.write(bc(), A);
+            write_and_tick(bc(), A);
             break;
         }
 
     case 0x03: { // INC BC
+            tick(4);
             set_bc(bc() + 1);
             break;
         }
@@ -461,7 +471,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x06: { // LD B, d8
-            B = mem.read(PC);
+            B = read_and_tick(PC);
             PC++;
             break;
         }
@@ -472,11 +482,11 @@ uint8_t Cpu::step() {
         }
 
     case 0x08: { // LD (a16), SP
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             uint16_t address = combine(high, low);
-            mem.write(address, SP);
-            mem.write(address + 1, SP >> 8);
+            write_and_tick(address, SP);
+            write_and_tick(address + 1, SP >> 8);
             PC += 2;
             break;
         }
@@ -485,6 +495,7 @@ uint8_t Cpu::step() {
             uint32_t sum = static_cast<uint32_t>(hl()) + bc();
             bool carry = sum > 0xFFFF;
             bool half_carry = ((hl() & 0x0FFF) + (bc() & 0x0FFF)) > 0x0FFF;
+            tick(4);
             set_hl(bc() + hl());
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, half_carry);
@@ -493,11 +504,12 @@ uint8_t Cpu::step() {
         }
 
     case 0x0A: { // LD A, (BC)
-            A = mem.read(bc());
+            A = read_and_tick(bc());
             break;
         }
 
     case 0x0B: { // DEC BC
+            tick(4);
             set_bc(bc() - 1);
             break;
         }
@@ -519,7 +531,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x0E: { // LD C, d8
-            C = mem.read(PC);
+            C = read_and_tick(PC);
             PC++;
             break;
         }
@@ -536,19 +548,20 @@ uint8_t Cpu::step() {
         }
 
     case 0x11: { // LD DE, d16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             set_de(combine(high, low));
             PC += 2;
             break;
         }
 
     case 0x12: { // LD (DE), A
-            mem.write(de(), A);
+            write_and_tick(de(), A);
             break;
         }
 
     case 0x13: { // INC DE
+            tick(4);
             set_de(de() + 1);
             break;
         }
@@ -570,7 +583,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x16: { // LD D, d8
-            D = mem.read(PC);
+            D = read_and_tick(PC);
             PC++;
             break;
         }
@@ -581,8 +594,9 @@ uint8_t Cpu::step() {
         }
 
     case 0x18: { // JR s8
-            int8_t offset = static_cast<int8_t>(mem.read(PC));
+            int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC += offset + 1;
+            tick(4);
             break;
         }
 
@@ -590,6 +604,7 @@ uint8_t Cpu::step() {
             uint32_t sum = static_cast<uint32_t>(hl()) + de();
             bool carry = sum > 0xFFFF;
             bool half_carry = ((hl() & 0x0FFF) + (de() & 0x0FFF)) > 0x0FFF;
+            tick(4);
             set_hl(de() + hl());
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, half_carry);
@@ -598,11 +613,12 @@ uint8_t Cpu::step() {
         }
 
     case 0x1A: { // LD A, (DE)
-            A = mem.read(de());
+            A = read_and_tick(de());
             break;
         }
 
     case 0x1B: { // DEC DE
+            tick(4);
             set_de(de() - 1);
             break;
         }
@@ -624,7 +640,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x1E: { // LD E, d8
-            E = mem.read(PC);
+            E = read_and_tick(PC);
             PC++;
             break;
         }
@@ -635,32 +651,32 @@ uint8_t Cpu::step() {
         }
 
     case 0x20: { // JR NZ, s8
-            int8_t offset = static_cast<int8_t>(mem.read(PC));
+            tick(4);
+            int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (!(F & FLAG_Z)) {
                 PC += offset;
-                conditional_cycles = 3;
-            } else {
-                conditional_cycles = 2;
+                tick(4);
             }
             break;
         }
 
     case 0x21: { // LD HL, d16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             set_hl(combine(high, low));
             PC += 2;
             break;
         }
 
     case 0x22: { // LD (HL+), A
-            mem.write(hl(), A);
+            write_and_tick(hl(), A);
             set_hl(hl() + 1);
             break;
         }
 
     case 0x23: { // INC HL
+            tick(4);
             set_hl(hl() + 1);
             break;
         }
@@ -682,7 +698,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x26: { // LD H, d8
-            H = mem.read(PC);
+            H = read_and_tick(PC);
             PC++;
             break;
         }
@@ -710,13 +726,12 @@ uint8_t Cpu::step() {
         }
 
     case 0x28: { // JR Z, s8
-            int8_t offset = static_cast<int8_t>(mem.read(PC));
+            tick(4);
+            int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (F & FLAG_Z) {
                 PC += offset;
-                conditional_cycles = 3;
-            } else {
-                conditional_cycles = 2;
+                tick(4);
             }
             break;
         }
@@ -725,6 +740,7 @@ uint8_t Cpu::step() {
             uint32_t sum = static_cast<uint32_t>(hl()) + hl();
             bool carry = sum > 0xFFFF;
             bool half_carry = ((hl() & 0x0FFF) + (hl() & 0x0FFF)) > 0x0FFF;
+            tick(4);
             set_hl(hl() + hl());
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, half_carry);
@@ -733,12 +749,13 @@ uint8_t Cpu::step() {
         }
 
     case 0x2A: { // LD A, (HL+)
-            A = mem.read(hl());
+            A = read_and_tick(hl());
             set_hl(hl() + 1);
             break;
         }
 
     case 0x2B: { // DEC HL
+            tick(4);
             set_hl(hl() - 1);
             break;
         }
@@ -760,7 +777,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x2E: { // LD L, d8
-            L = mem.read(PC);
+            L = read_and_tick(PC);
             PC++;
             break;
         }
@@ -773,40 +790,40 @@ uint8_t Cpu::step() {
         }
 
     case 0x30: { // JR NC, s8
-            int8_t offset = static_cast<int8_t>(mem.read(PC));
+            tick(4);
+            int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (!(F & FLAG_C)) {
                 PC += offset;
-                conditional_cycles = 3;
-            } else {
-                conditional_cycles = 2;
+                tick(4);
             }
             break;
         }
 
     case 0x31: { // LD SP, d16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             SP = combine(high, low);
             PC += 2;
             break;
         }
 
     case 0x32: { // LD (HL-), A
-            mem.write(hl(), A);
+            write_and_tick(hl(), A);
             set_hl(hl() - 1);
             break;
         }
 
     case 0x33: { // INC SP
+            tick(4);
             SP++;
             break;
         }
 
     case 0x34: { // INC (HL)
-            uint8_t HL = mem.read(hl());
+            uint8_t HL = read_and_tick(hl());
             HL++;
-            mem.write(hl(), HL);
+            write_and_tick(hl(), HL);
             set_flag(FLAG_Z, HL == 0);
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, (HL & 0x0F) == 0x00);
@@ -814,9 +831,9 @@ uint8_t Cpu::step() {
         }
 
     case 0x35: { // DEC (HL)
-            uint8_t HL = mem.read(hl());
+            uint8_t HL = read_and_tick(hl());
             HL--;
-            mem.write(hl(), HL);
+            write_and_tick(hl(), HL);
             set_flag(FLAG_Z, HL == 0);
             set_flag(FLAG_N, true);
             set_flag(FLAG_H, (HL & 0x0F) == 0x0F);
@@ -824,7 +841,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x36: { // LD (HL), d8
-            mem.write(hl(), mem.read(PC));
+            write_and_tick(hl(), read_and_tick(PC));
             PC++;
             break;
         }
@@ -837,13 +854,12 @@ uint8_t Cpu::step() {
         }
 
     case 0x38: { // JR C, s8
-            int8_t offset = static_cast<int8_t>(mem.read(PC));
+            tick(4);
+            int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (F & FLAG_C) {
                 PC += offset;
-                conditional_cycles = 3;
-            } else {
-                conditional_cycles = 2;
+                tick(4);
             }
             break;
         }
@@ -852,6 +868,7 @@ uint8_t Cpu::step() {
             uint32_t sum = static_cast<uint32_t>(hl()) + SP;
             bool carry = sum > 0xFFFF;
             bool half_carry = ((hl() & 0x0FFF) + (SP & 0x0FFF)) > 0x0FFF;
+            tick(4);
             set_hl(hl() + SP);
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, half_carry);
@@ -860,12 +877,13 @@ uint8_t Cpu::step() {
         }
 
     case 0x3A: { // LD A, (HL-)
-            A = mem.read(hl());
+            A = read_and_tick(hl());
             set_hl(hl() - 1);
             break;
         }
 
     case 0x3B: { // DEC SP
+            tick(4);
             SP--;
             break;
         }
@@ -887,7 +905,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x3E: { // LD A, d8
-            A = mem.read(PC);
+            A = read_and_tick(PC);
             PC++;
             break;
         }
@@ -928,7 +946,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x46: { // LD B, (HL)
-            B = mem.read(hl());
+            B = read_and_tick(hl());
             break;
         }
 
@@ -966,7 +984,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x4E: { // LD C, (HL)
-            C = mem.read(hl());
+            C = read_and_tick(hl());
             break;
         }
 
@@ -1004,7 +1022,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x56: { // LD D, (HL)
-            D = mem.read(hl());
+            D = read_and_tick(hl());
             break;
         }
 
@@ -1042,7 +1060,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x5E: { // LD E, (HL)
-            E = mem.read(hl());
+            E = read_and_tick(hl());
             break;
         }
 
@@ -1080,7 +1098,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x66: { // LD H, (HL)
-            H = mem.read(hl());
+            H = read_and_tick(hl());
             break;
         }
 
@@ -1118,7 +1136,7 @@ uint8_t Cpu::step() {
         break;
 
     case 0x6E: { // LD L, (HL)
-            L = mem.read(hl());
+            L = read_and_tick(hl());
             break;
         }
 
@@ -1128,32 +1146,32 @@ uint8_t Cpu::step() {
         }
 
     case 0x70: { // LD (HL), B
-            mem.write(hl(), B);
+            write_and_tick(hl(), B);
             break;
         }
 
     case 0x71: { // LD (HL), C
-            mem.write(hl(), C);
+            write_and_tick(hl(), C);
             break;
         }
 
     case 0x72: { // LD (HL), D
-            mem.write(hl(), D);
+            write_and_tick(hl(), D);
             break;
         }
 
     case 0x73: { // LD (HL), E
-            mem.write(hl(), E);
+            write_and_tick(hl(), E);
             break;
         }
 
     case 0x74: { // LD (HL), H
-            mem.write(hl(), H);
+            write_and_tick(hl(), H);
             break;
         }
 
     case 0x75: { // LD (HL), L
-            mem.write(hl(), L);
+            write_and_tick(hl(), L);
             break;
         }
 
@@ -1163,7 +1181,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x77: { // LD (HL), A
-            mem.write(hl(), A);
+            write_and_tick(hl(), A);
             break;
         }
 
@@ -1198,7 +1216,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x7E: { // LD A, (HL)
-            A = mem.read(hl());
+            A = read_and_tick(hl());
             break;
         }
 
@@ -1236,7 +1254,7 @@ uint8_t Cpu::step() {
         }
 
     case 0x86: { // ADD A, (HL)
-            A = add(mem.read(hl()), false);
+            A = add(read_and_tick(hl()), false);
             break;
         }
 
@@ -1276,7 +1294,7 @@ uint8_t Cpu::step() {
     }
 
     case 0x8E: { // ADC A, (HL)
-            A = add(mem.read(hl()), true);
+            A = add(read_and_tick(hl()), true);
             break;
     }
 
@@ -1316,7 +1334,7 @@ uint8_t Cpu::step() {
     }
 
     case 0x96: { // SUB A, (HL)
-            A = sub(mem.read(hl()), false);
+            A = sub(read_and_tick(hl()), false);
             break;
     }
 
@@ -1356,7 +1374,7 @@ uint8_t Cpu::step() {
     }
 
     case 0x9E: { // SBC A, (HL)
-            A = sub(mem.read(hl()), true);
+            A = sub(read_and_tick(hl()), true);
             break;
     }
 
@@ -1396,7 +1414,7 @@ uint8_t Cpu::step() {
         }
 
     case 0xA6: { // AND A, (HL)
-            A = and_x(mem.read(hl()));
+            A = and_x(read_and_tick(hl()));
             break;
         }
 
@@ -1436,7 +1454,7 @@ uint8_t Cpu::step() {
         }
 
     case 0xAE: { // XOR A, (HL)
-            A = xor_x(mem.read(hl()));
+            A = xor_x(read_and_tick(hl()));
             break;
         }
 
@@ -1476,7 +1494,7 @@ uint8_t Cpu::step() {
         }
 
     case 0xB6: { // OR A, (HL)
-            A = or_x(mem.read(hl()));
+            A = or_x(read_and_tick(hl()));
             break;
         }
 
@@ -1516,7 +1534,7 @@ uint8_t Cpu::step() {
         }
 
     case 0xBE: { // CP A, (HL)
-            cp(mem.read(hl()));
+            cp(read_and_tick(hl()));
             break;
         }
 
@@ -1526,106 +1544,102 @@ uint8_t Cpu::step() {
         }
 
     case 0xC0: { // RET NZ
+            tick(4);
             if (!(F & FLAG_Z)) {
                 ret();
-                conditional_cycles = 5;
-            } else {
-                conditional_cycles = 2;
             }
             break;
         }
 
     case 0xC1: { // POP BC
-            uint8_t low = mem.read(SP);
+            uint8_t low = read_and_tick(SP);
             SP++;
-            uint8_t high = mem.read(SP);
+            uint8_t high = read_and_tick(SP);
             SP++;
             set_bc(combine(high, low));
             break;
         }
 
     case 0xC2: { // JP NZ, a16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             PC += 2;
             if (!(F & FLAG_Z)) {
                 PC = combine(high, low);
-                conditional_cycles = 4;
-            } else {
-                conditional_cycles = 3;
+                tick(4);
             }
             break;
         }
 
     case 0xC3: { // JP a16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             PC = combine(high, low);
+            tick(4);
             break;
         }
 
     case 0xC4: { // CALL NZ, a16
             if (!(F & FLAG_Z)) {
                 call();
-                conditional_cycles = 6;
             } else {
+                read_and_tick(PC);
+                read_and_tick(PC + 1);
                 PC += 2;
-                conditional_cycles = 3;
             }
             break;
         }
 
     case 0xC5: { // PUSH BC
+            tick(4);
             uint8_t low = bc();
             uint8_t high = bc() >> 8;
-            mem.write(SP - 1, high);
-            mem.write(SP - 2, low);
+            write_and_tick(SP - 1, high);
+            write_and_tick(SP - 2, low);
             SP -= 2;
             break;
         }
 
     case 0xC6: { // ADD A, d8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             A = add(operand, false);
             PC++;
             break;
         }
 
     case 0xC7: { // RST 0
+            tick(4);
             rst(0x00);
             break;
         }
 
     case 0xC8: { // RET Z
+            tick(4);
             if (F & FLAG_Z) {
                 ret();
-                conditional_cycles = 5;
-            } else {
-                conditional_cycles = 2;
             }
             break;
         }
 
     case 0xC9: { // RET
             ret();
+            tick(4);
             break;
         }
 
     case 0xCA: { // JP Z, a16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             PC += 2;
             if (F & FLAG_Z) {
                 PC = combine(high, low);
-                conditional_cycles = 4;
-            } else {
-                conditional_cycles = 3;
+                tick(4);
             }
             break;
         }
 
     case 0xCB: { // redirect to CB table
-            cb_opcode = mem.read(PC);
+            cb_opcode = read_and_tick(PC);
             PC++;
             switch (cb_opcode) {
             case 0x00: { // RLC B
@@ -1659,7 +1673,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x06: { // RLC (HL)
-                    mem.write(hl(), rlc(mem.read(hl()), true));
+                    write_and_tick(hl(), rlc(read_and_tick(hl()), true));
                     break;
                 }
 
@@ -1699,7 +1713,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x0E: { // RRC (HL)
-                    mem.write(hl(), rrc(mem.read(hl()), true));
+                    write_and_tick(hl(), rrc(read_and_tick(hl()), true));
                     break;
                 }
 
@@ -1739,7 +1753,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x16: { // RL (HL)
-                    mem.write(hl(), rl(mem.read(hl()), true));
+                    write_and_tick(hl(), rl(read_and_tick(hl()), true));
                     break;
                 }
 
@@ -1779,7 +1793,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x1E: { // RR (HL)
-                    mem.write(hl(), rr(mem.read(hl()), true));
+                    write_and_tick(hl(), rr(read_and_tick(hl()), true));
                     break;
                 }
 
@@ -1819,7 +1833,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x26: { // SLA (HL)
-                    mem.write(hl(), sla(mem.read(hl())));
+                    write_and_tick(hl(), sla(read_and_tick(hl())));
                     break;
                 }
 
@@ -1859,7 +1873,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x2E: { // SRA (HL)
-                    mem.write(hl(), sra(mem.read(hl())));
+                    write_and_tick(hl(), sra(read_and_tick(hl())));
                     break;
                 }
 
@@ -1899,7 +1913,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x36: { // SWAP (HL)
-                    mem.write(hl(), swap(mem.read(hl())));
+                    write_and_tick(hl(), swap(read_and_tick(hl())));
                     break;
                 }
 
@@ -1939,7 +1953,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x3E: { // SRL (HL)
-                    mem.write(hl(), srl(mem.read(hl())));
+                    write_and_tick(hl(), srl(read_and_tick(hl())));
                     break;
                 }
 
@@ -1979,7 +1993,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x46: { // BIT 0, (HL)
-                    bit(0, mem.read(hl()));
+                    bit(0, read_and_tick(hl()));
                     break;
                 }
 
@@ -2019,7 +2033,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x4E: { // BIT 1, (HL)
-                    bit(1, mem.read(hl()));
+                    bit(1, read_and_tick(hl()));
                     break;
                 }
 
@@ -2060,7 +2074,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x56: { // BIT 2, (HL)
-                    bit(2, mem.read(hl()));
+                    bit(2, read_and_tick(hl()));
                     break;
                 }
 
@@ -2100,7 +2114,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x5E: { // BIT 3, (HL)
-                    bit(3, mem.read(hl()));
+                    bit(3, read_and_tick(hl()));
                     break;
                 }
 
@@ -2141,7 +2155,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x66: { // BIT 4, (HL)
-                    bit(4, mem.read(hl()));
+                    bit(4, read_and_tick(hl()));
                     break;
                 }
 
@@ -2181,7 +2195,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x6E: { // BIT 5, (HL)
-                    bit(5, mem.read(hl()));
+                    bit(5, read_and_tick(hl()));
                     break;
                 }
 
@@ -2222,7 +2236,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x76: { // BIT 6, (HL)
-                    bit(6, mem.read(hl()));
+                    bit(6, read_and_tick(hl()));
                     break;
                 }
 
@@ -2262,7 +2276,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x7E: { // BIT 7, (HL)
-                    bit(7, mem.read(hl()));
+                    bit(7, read_and_tick(hl()));
                     break;
                 }
 
@@ -2302,7 +2316,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x86: { // RES 0, (HL)
-                    mem.write(hl(), res(0, mem.read(hl())));
+                    write_and_tick(hl(), res(0, read_and_tick(hl())));
                     break;
                 }
 
@@ -2342,7 +2356,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x8E: { // RES 1, (HL)
-                    mem.write(hl(), res(1, mem.read(hl())));
+                    write_and_tick(hl(), res(1, read_and_tick(hl())));
                     break;
                 }
 
@@ -2383,7 +2397,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x96: { // RES 2, (HL)
-                    mem.write(hl(), res(2, mem.read(hl())));
+                    write_and_tick(hl(), res(2, read_and_tick(hl())));
                     break;
                 }
 
@@ -2423,7 +2437,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0x9E: { // RES 3, (HL)
-                    mem.write(hl(), res(3, mem.read(hl())));
+                    write_and_tick(hl(), res(3, read_and_tick(hl())));
                     break;
                 }
 
@@ -2464,7 +2478,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xA6: { // RES 4, (HL)
-                    mem.write(hl(), res(4, mem.read(hl())));
+                    write_and_tick(hl(), res(4, read_and_tick(hl())));
                     break;
                 }
 
@@ -2504,7 +2518,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xAE: { // RES 5, (HL)
-                    mem.write(hl(), res(5, mem.read(hl())));
+                    write_and_tick(hl(), res(5, read_and_tick(hl())));
                     break;
                 }
 
@@ -2545,7 +2559,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xB6: { // RES 6, (HL)
-                    mem.write(hl(), res(6, mem.read(hl())));
+                    write_and_tick(hl(), res(6, read_and_tick(hl())));
                     break;
                 }
 
@@ -2585,7 +2599,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xBE: { // RES 7, (HL)
-                    mem.write(hl(), res(7, mem.read(hl())));
+                    write_and_tick(hl(), res(7, read_and_tick(hl())));
                     break;
                 }
 
@@ -2625,7 +2639,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xC6: { // SET 0, (HL)
-                    mem.write(hl(), set_bit(0, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(0, read_and_tick(hl())));
                     break;
                 }
 
@@ -2665,7 +2679,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xCE: { // SET 1, (HL)
-                    mem.write(hl(), set_bit(1, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(1, read_and_tick(hl())));
                     break;
                 }
 
@@ -2706,7 +2720,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xD6: { // SET 2, (HL)
-                    mem.write(hl(), set_bit(2, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(2, read_and_tick(hl())));
                     break;
                 }
 
@@ -2746,7 +2760,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xDE: { // SET 3, (HL)
-                    mem.write(hl(), set_bit(3, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(3, read_and_tick(hl())));
                     break;
                 }
 
@@ -2787,7 +2801,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xE6: { // SET 4, (HL)
-                    mem.write(hl(), set_bit(4, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(4, read_and_tick(hl())));
                     break;
                 }
 
@@ -2827,7 +2841,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xEE: { // SET 5, (HL)
-                    mem.write(hl(), set_bit(5, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(5, read_and_tick(hl())));
                     break;
                 }
 
@@ -2868,7 +2882,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xF6: { // SET 6, (HL)
-                    mem.write(hl(), set_bit(6, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(6, read_and_tick(hl())));
                     break;
                 }
 
@@ -2894,6 +2908,7 @@ uint8_t Cpu::step() {
 
             case 0xFB: { // SET 7, E
                     E = set_bit(7, E);
+                    ime_pending = true;
                     break;
                 }
 
@@ -2908,7 +2923,7 @@ uint8_t Cpu::step() {
                 }
 
             case 0xFE: { // SET 7, (HL)
-                    mem.write(hl(), set_bit(7, mem.read(hl())));
+                    write_and_tick(hl(), set_bit(7, read_and_tick(hl())));
                     break;
                 }
 
@@ -2929,10 +2944,10 @@ uint8_t Cpu::step() {
     case 0xCC: { // CALL Z, a16
             if (F & FLAG_Z) {
                 call();
-                conditional_cycles = 6;
             } else {
+                read_and_tick(PC);
+                read_and_tick(PC + 1);
                 PC += 2;
-                conditional_cycles = 3;
             }
             break;
         }
@@ -2943,45 +2958,42 @@ uint8_t Cpu::step() {
         }
 
     case 0xCE: { // ADC A, d8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             A = add(operand, true);
             PC++;
             break;
         }
 
     case 0xCF: { // RST 1
+            tick(4);
             rst(0x08);
             break;
         }
 
     case 0xD0: { // RET NC
+            tick(4);
             if (!(F & FLAG_C)) {
                 ret();
-                conditional_cycles = 5;
-            } else {
-                conditional_cycles = 2;
             }
             break;
         }
 
     case 0xD1: { // POP DE
-            uint8_t low = mem.read(SP);
+            uint8_t low = read_and_tick(SP);
             SP++;
-            uint8_t high = mem.read(SP);
+            uint8_t high = read_and_tick(SP);
             SP++;
             set_de(combine(high, low));
             break;
         }
 
     case 0xD2: { // JP NC, a16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             PC += 2;
             if (!(F & FLAG_C)) {
                 PC = combine(high, low);
-                conditional_cycles = 4;
-            } else {
-                conditional_cycles = 3;
+                tick(4);
             }
             break;
         }
@@ -2989,41 +3001,41 @@ uint8_t Cpu::step() {
     case 0xD4: { // CALL NC, a16
             if (!(F & FLAG_C)) {
                 call();
-                conditional_cycles = 6;
             } else {
+                read_and_tick(PC);
+                read_and_tick(PC + 1);
                 PC += 2;
-                conditional_cycles = 3;
             }
             break;
         }
 
     case 0xD5: { // PUSH DE
+            tick(4);
             uint8_t low = de();
             uint8_t high = de() >> 8;
-            mem.write(SP - 1, high);
-            mem.write(SP - 2, low);
+            write_and_tick(SP - 1, high);
+            write_and_tick(SP - 2, low);
             SP -= 2;
             break;
         }
 
     case 0xD6: { // SUB A, d8
-            uint8_t operand  = mem.read(PC);
+            uint8_t operand  = read_and_tick(PC);
             A = sub(operand, false);
             PC++;
             break;
         }
 
     case 0xD7: { // RST 2
+            tick(4);
             rst(0x10);
             break;
         }
 
     case 0xD8: { // RET C
+            tick(4);
             if (F & FLAG_C) {
                 ret();
-                conditional_cycles = 5;
-            } else {
-                conditional_cycles = 2;
             }
             break;
         }
@@ -3031,96 +3043,90 @@ uint8_t Cpu::step() {
     case 0xD9: { // RETI
             ret();
             IME = true;
+            tick(4);
             break;
         }
 
     case 0xDA: { // JP C, a16
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
             PC += 2;
             if (F & FLAG_C) {
                 PC = combine(high, low);
-                conditional_cycles = 4;
-            } else {
-                conditional_cycles = 3;
+                tick(4);
             }
             break;
         }
 
     case 0xDC: { // CALL C, a16
-            if (F & FLAG_C)
-            {
-                uint8_t low = mem.read(PC);
-                uint8_t high = mem.read(PC + 1);
-                PC += 2;
-                SP--;
-                mem.write(SP, (PC >> 8) & 0xFF);
-                SP--;
-                mem.write(SP, PC & 0xFF);
-                PC = combine(high, low);
-                conditional_cycles = 6;
+            if (F & FLAG_C) {
+                call();
             } else {
+                read_and_tick(PC);
+                read_and_tick(PC + 1);
                 PC += 2;
-                conditional_cycles = 3;
             }
             break;
-        }
+    }
 
     case 0xDE: { // SBC A, d8
-            uint8_t operand  = mem.read(PC);
+            uint8_t operand  = read_and_tick(PC);
             A = sub(operand, true);
             PC++;
             break;
         }
 
     case 0xDF: { // RST 3
+            tick(4);
             rst(0x18);
             break;
         }
 
     case 0xE0: { // LD (a8), A
-            mem.write(0xFF00 + mem.read(PC), A);
+            write_and_tick(0xFF00 + read_and_tick(PC), A);
             PC++;
             break;
         }
 
     case 0xE1: { // POP HL
-            uint8_t low = mem.read(SP);
+            uint8_t low = read_and_tick(SP);
             SP++;
-            uint8_t high = mem.read(SP);
+            uint8_t high = read_and_tick(SP);
             SP++;
             set_hl(combine(high, low));
             break;
         }
 
     case 0xE2: { // LD (C), A
-            mem.write(0xFF00 + C, A);
+            write_and_tick(0xFF00 + C, A);
             break;
         }
 
     case 0xE5: { // PUSH HL
+            tick(4);
             uint8_t low = hl();
             uint8_t high = hl() >> 8;
-            mem.write(SP - 1, high);
-            mem.write(SP - 2, low);
+            write_and_tick(SP - 1, high);
+            write_and_tick(SP - 2, low);
             SP -= 2;
             break;
         }
 
     case 0xE6: { // AND A, d8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             A = and_x(operand);
             PC++;
             break;
         }
 
     case 0xE7: { // RST 4
+            tick(4);
             rst(0x20);
             break;
         }
 
     case 0xE8: { // ADD SP, s8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             int8_t offset = static_cast<int8_t>(operand);
             PC++;
             bool half_carry = ((SP & 0x0F) + (operand & 0x0F)) > 0x0F;
@@ -3130,6 +3136,7 @@ uint8_t Cpu::step() {
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, half_carry);
             set_flag(FLAG_C, carry);
+            tick(8);
             break;
         }
 
@@ -3139,42 +3146,43 @@ uint8_t Cpu::step() {
         }
 
     case 0xEA: { // LD (a16), A
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
-            mem.write(combine(high, low), A);
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
+            write_and_tick(combine(high, low), A);
             PC += 2;
             break;
         }
 
     case 0xEE: { // XOR A, d8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             A = xor_x(operand);
             PC++;
             break;
         }
 
     case 0xEF: { // RST 5
+            tick(4);
             rst(0x28);
             break;
         }
 
     case 0xF0: { // LD A, (a8)
-            A = mem.read(0xFF00 + mem.read(PC));
+            A = read_and_tick(0xFF00 + read_and_tick(PC));
             PC++;
             break;
         }
 
     case 0xF1: { // POP AF
-            uint8_t low = mem.read(SP);
+            uint8_t low = read_and_tick(SP);
             SP++;
-            uint8_t high = mem.read(SP);
+            uint8_t high = read_and_tick(SP);
             SP++;
             set_af(combine(high, low));
             break;
         }
 
     case 0xF2: { // LD A, (C)
-            A = mem.read(0xFF00 + C);
+            A = read_and_tick(0xFF00 + C);
             break;
         }
 
@@ -3185,28 +3193,30 @@ uint8_t Cpu::step() {
         }
 
     case 0xF5: { // PUSH AF
+            tick(4);
             uint8_t low = af();
             uint8_t high = af() >> 8;
-            mem.write(SP - 1, high);
-            mem.write(SP - 2, low);
+            write_and_tick(SP - 1, high);
+            write_and_tick(SP - 2, low);
             SP -= 2;
             break;
         }
 
     case 0xF6: { // OR A, d8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             A = or_x(operand);
             PC++;
             break;
         }
 
     case 0xF7: { // RST 6
+            tick(4);
             rst(0x30);
             break;
         }
 
     case 0xF8: { // LD HL, SP+s8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             int8_t offset = static_cast<int8_t>(operand);
             PC++;
             set_hl(SP + offset);
@@ -3216,35 +3226,38 @@ uint8_t Cpu::step() {
             set_flag(FLAG_N, false);
             set_flag(FLAG_H, half_carry);
             set_flag(FLAG_C, carry);
+            tick(4);
             break;
         }
 
     case 0xF9: { // LD SP, HL
+            tick(4);
             SP = hl();
             break;
         }
 
     case 0xFA: { // LD A, (a16)
-            uint8_t low = mem.read(PC);
-            uint8_t high = mem.read(PC + 1);
-            A = mem.read(combine(high, low));
+            uint8_t low = read_and_tick(PC);
+            uint8_t high = read_and_tick(PC + 1);
+            A = read_and_tick(combine(high, low));
             PC += 2;
             break;
         }
 
     case 0xFB: { // EI
-            ime_pending = true;
+            ime_pending = 2;
             break;
         }
 
     case 0xFE: { // CP d8
-            uint8_t operand = mem.read(PC);
+            uint8_t operand = read_and_tick(PC);
             cp(operand);
             PC++;
             break;
         }
 
     case 0xFF: { // RST 7
+            tick(4);
             rst(0x38);
             break;
         }
@@ -3256,18 +3269,10 @@ uint8_t Cpu::step() {
     }
 
     if (ime_pending) {
-        IME = true;
-        ime_pending = false;
+        ime_pending--;
+        if (ime_pending == 0)
+            IME = true;
     }
 
-    uint8_t cycles;
-    if (conditional_cycles)
-        cycles = conditional_cycles * 4;
-    else
-        cycles = (opcode == 0xCB) ?
-            cb_opcode_cycles[cb_opcode] * 4 :
-            main_opcode_cycles[opcode] * 4;
-
-    tick(cycles);
-    return cycles;
+    return 0;
 }

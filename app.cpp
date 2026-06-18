@@ -66,8 +66,7 @@ void App::run() {
         if (state == AppState::PLAYING) {
             // step until a frame is ready
             while (!ppu->frame_ready) {
-                uint8_t cycles = cpu->step();
-                ppu->step(cycles);
+                cpu->step();
             }
             ppu->frame_ready = false;
             render_game();
@@ -97,8 +96,8 @@ void App::scan_roms() {
 void App::load_rom(const std::string& name) {
     // rebuild the emulator
     mem = std::make_unique<Memory>();
-    cpu = std::make_unique<Cpu>(*mem);
     ppu = std::make_unique<Ppu>(*mem);
+    cpu = std::make_unique<Cpu>(*mem, *ppu);
 
     std::ifstream rom_file(rom_folder + name, std::ios::binary);
     if (!rom_file) {
