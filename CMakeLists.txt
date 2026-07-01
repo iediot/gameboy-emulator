@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 4.1)
+
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment version")
+
 project(gameboy_emu)
 
 set(CMAKE_CXX_STANDARD 20)
