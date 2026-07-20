@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
+#include "platform.h"
 #include "memory.h"
 #include "cpu.h"
 #include "ppu.h"
@@ -38,9 +40,17 @@ private:
     std::vector<std::string> rom_list;
     std::vector<SDL_Texture*> cover_list;
     int selected_rom;
-    std::string rom_folder;
+    int carousel_index = 0;      // currently framed cover on the ios menu
+    std::string rom_folder;      // where .gb files are read from
+    std::string artwork_folder;  // where cover art .png files live
+    std::string sprite_path;     // the gameboy bezel sprite
+#if GB_IOS
+    std::map<SDL_FingerID, int> touch_buttons; // live fingers to the joypad bit each one holds
+    bool active = true; // false while backgrounded, we must not touch the gpu then
+#endif
 
     // private methods
+    void init_paths();
     void scan_roms();
     void load_rom(const std::string& name);
     void render_game();
@@ -50,6 +60,12 @@ private:
     std::string closest_artwork(const std::string& rom_name);
     std::string display_name(const std::string& s);
     void render_menu();
+#if GB_IOS
+    // ios-only layout and touch input, implemented in ios_ui.cpp
+    void render_menu_ios();
+    void render_game_ios();
+    void handle_touch_ios(const SDL_Event& event);
+#endif
 public:
     // constructor
     App();

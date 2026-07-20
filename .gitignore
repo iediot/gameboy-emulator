@@ -1,1 +1,6 @@
 build-xcode/
+build-ios/
+build-ios-device/
+cmake-build-debug/
+.claude/
+.DS_Store

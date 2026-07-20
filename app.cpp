@@ -7,23 +7,32 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
-#include <nfd.h>
+#include "platform.h" // first so GB_DESKTOP is defined before the guard below
+#if GB_DESKTOP
+#include <nfd.h> // native desktop file dialog, no ios equivalent
+#endif
 #include "app.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
 // constructor
-App::App() : state(AppState::MENU), selected_rom(-1), rom_folder("../roms/game-roms/") {
+App::App() : state(AppState::MENU), selected_rom(-1) {
     // sdl
     SDL_Init(SDL_INIT_VIDEO);
+    init_paths();
+    Uint32 win_flags = SDL_WINDOW_SHOWN;
+#if GB_IOS
+    win_flags |= SDL_WINDOW_ALLOW_HIGHDPI; // back the renderer at native pixels, not an upscaled buffer
+#endif
     window = SDL_CreateWindow("GBEmulator", // window title
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, // center the window
-        600, 1000, SDL_WINDOW_SHOWN); // resolution for 4x scale
+        600, 1000, win_flags); // resolution for 4x scale
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, 160, 144);
-    gameboy_sprite = IMG_LoadTexture(renderer, "../sprites/gameboy.png");
+    SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest); // keep the gameboy pixels sharp when scaled up
+    gameboy_sprite = IMG_LoadTexture(renderer, sprite_path.c_str());
     screen_area = {142, 129, 330, 301};
     // imgui
     IMGUI_CHECKVERSION();
@@ -32,10 +41,28 @@ App::App() : state(AppState::MENU), selected_rom(-1), rom_folder("../roms/game-r
     setup_style();
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+#if GB_DESKTOP
     // nfd
     NFD_Init();
+#endif
 
     scan_roms();
+}
+
+// resolve rom, cover and sprite paths per platform, ios reads them from the app bundle
+void App::init_paths() {
+#if GB_IOS
+    char* base = SDL_GetBasePath();
+    std::string b = base ? base : "";
+    if (base) SDL_free(base);
+    sprite_path    = b + "emu-sprite.png"; // full-res ios bezel, the old gameboy.png stays unused
+    artwork_folder = b + "artworks/";
+    rom_folder     = b + "game-roms/";
+#else
+    sprite_path    = "../sprites/gameboy.png";
+    artwork_folder = "../artworks/";
+    rom_folder     = "../roms/game-roms/";
+#endif
 }
 
 // destructor
@@ -48,8 +75,10 @@ App::~App() {
     for (SDL_Texture* cover : cover_list)
         if (cover)
             SDL_DestroyTexture(cover);
+#if GB_DESKTOP
     // nfd
     NFD_Quit();
+#endif
     // sdl
     SDL_DestroyTexture(texture);
     SDL_DestroyTexture(gameboy_sprite);
@@ -62,6 +91,14 @@ App::~App() {
 void App::run() {
     while (true) {
         handle_events();
+
+#if GB_IOS
+        // ios forbids gpu work in the background, so pause the whole loop until we return
+        if (!active) {
+            SDL_Delay(150);
+            continue;
+        }
+#endif
 
         if (state == AppState::PLAYING) {
             // step until a frame is ready
@@ -113,6 +150,10 @@ void App::load_rom(const std::string& name) {
 
 // the renderer of the games inside the actual emulator
 void App::render_game() {
+#if GB_IOS
+    render_game_ios(); // letterboxed layout lives in ios_ui.cpp
+    return;
+#endif
     uint32_t pixels[144 * 160];
     for (int y = 0; y < 144; y++)
         for (int x = 0; x < 160; x++)
@@ -138,15 +179,43 @@ void App::render_game() {
 
 // handler for the input and sdl window elements
 void App::handle_events() {
+#if GB_IOS
+    // the ios menu is laid out in device pixels, so point-based touch events are scaled up to match
+    float ui_scale = 1.0f;
+    {
+        int ww, wh, ow, oh;
+        SDL_GetWindowSize(window, &ww, &wh);
+        SDL_GetRendererOutputSize(renderer, &ow, &oh);
+        if (ww > 0) ui_scale = (float)ow / ww;
+    }
+#endif
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         // DON'T let imgui see every event
         // imgui should only see input when in menu mode
-        if (state == AppState::MENU)
+        if (state == AppState::MENU) {
+#if GB_IOS
+            if (event.type == SDL_MOUSEMOTION) {
+                event.motion.x = (int)(event.motion.x * ui_scale);
+                event.motion.y = (int)(event.motion.y * ui_scale);
+            } else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+                event.button.x = (int)(event.button.x * ui_scale);
+                event.button.y = (int)(event.button.y * ui_scale);
+            }
+#endif
             ImGui_ImplSDL2_ProcessEvent(&event);
+        }
 
         if (event.type == SDL_QUIT)
             std::exit(0);
+
+#if GB_IOS
+        // stop rendering the moment ios tells us we are leaving the foreground, resume when back
+        if (event.type == SDL_APP_WILLENTERBACKGROUND || event.type == SDL_APP_DIDENTERBACKGROUND)
+            active = false;
+        if (event.type == SDL_APP_DIDENTERFOREGROUND)
+            active = true;
+#endif
 
         // esc returns to menu
         if (event.type == SDL_KEYDOWN &&
@@ -156,8 +225,14 @@ void App::handle_events() {
             continue;
             }
 
+#if GB_IOS
+        // on ios the joypad and the back button are on-screen touch zones
+        if (state == AppState::PLAYING)
+            handle_touch_ios(event);
+#endif
+
         // map the keybinds to the 8 joypad bits
-        if (state == AppState::PLAYING &&
+        if (GB_DESKTOP && state == AppState::PLAYING &&
             (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)) {
             bool pressed = (event.type == SDL_KEYDOWN);
             switch (event.key.keysym.sym) {
@@ -233,7 +308,7 @@ std::string App::closest_artwork(const std::string& rom_name) {
     std::string best_path;
     size_t best_score = std::string::npos;
 
-    for (const auto& entry : std::filesystem::directory_iterator("../artworks/")) {
+    for (const auto& entry : std::filesystem::directory_iterator(artwork_folder)) {
         if (entry.path().extension() != ".png") continue;
 
         std::string cand = normalize(entry.path().stem().string());
@@ -284,6 +359,10 @@ std::string App::display_name(const std::string& s) {
 }
 
 void App::render_menu() {
+#if GB_IOS
+    render_menu_ios(); // swipe carousel lives in ios_ui.cpp
+    return;
+#endif
     ImGui_ImplSDLRenderer2_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
@@ -324,7 +403,8 @@ void App::render_menu() {
     }
     ImGui::PopStyleVar();
 
-    // add game button
+#if GB_DESKTOP
+    // add game button, desktop only since ios has no native file dialog
     ImGui::BeginGroup();
     // get the 'add button' top left position to know where to place the + sign
     ImVec2 cursor = ImGui::GetCursorScreenPos();
@@ -361,6 +441,7 @@ void App::render_menu() {
             scan_roms();
         }
     }
+#endif // GB_DESKTOP
 
     ImGui::EndChild();
 
