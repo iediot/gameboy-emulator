@@ -7,7 +7,7 @@
 #if GB_IOS
 
 #include <algorithm>
-#include <cstdio>
+#include <cmath>
 #include <string>
 #include "app.h"
 #include "imgui.h"
@@ -168,67 +168,92 @@ void App::render_menu_ios() {
     ImGui::SetCursorPos(ImVec2(0, h * 0.09f)); // low enough to clear the dynamic island
     centre_text("gameboy-emu");
 
-    int count = (int)rom_list.size();
+    // split the library: games have cover art, debug/test roms do not; a button flips between them
+    std::vector<int> view;
+    for (int i = 0; i < (int)rom_list.size(); i++)
+        if ((cover_list[i] != nullptr) != show_debug)
+            view.push_back(i);
+    int count = (int)view.size();
+
+    // category toggle, sits just under the title
+    float toggle_w = w * 0.5f;
+    ImGui::SetCursorPos(ImVec2((w - toggle_w) * 0.5f, h * 0.15f));
+    if (ImGui::Button(show_debug ? "back to games" : "debug roms", ImVec2(toggle_w, h * 0.05f))) {
+        show_debug = !show_debug;
+        carousel_pos = 0.0f;
+    }
+
     if (count == 0) {
         ImGui::SetCursorPos(ImVec2(0, h * 0.45f));
-        centre_text("no games bundled");
+        centre_text(show_debug ? "no debug roms" : "no games bundled");
     } else {
-        // keep the framed index in range
-        carousel_index = (carousel_index % count + count) % count;
+        // layout of the cover band, all in device pixels
+        float cover = w * 0.60f;      // size of the centred cover
+        float cover_cx = w * 0.5f;    // horizontal centre of the band
+        float cover_cy = h * 0.42f;   // vertical centre of the band
+        float spacing = w * 0.72f;    // distance between neighbouring covers
 
-        // big square cover sized off the screen width
-        float cover = w * 0.62f;
-        float cover_x = (w - cover) * 0.5f;
-        float cover_y = h * 0.16f;
-        float arrow = w * 0.12f;
+        // a horizontal swipe over the whole band is the only way to move between entries
+        ImGui::SetCursorPos(ImVec2(0, cover_cy - cover * 0.75f));
+        ImGui::InvisibleButton("swipe", ImVec2(w, cover * 1.5f));
+        if (ImGui::IsItemActivated())
+            carousel_drag_start = carousel_pos;
+        if (ImGui::IsItemActive())
+            carousel_pos = carousel_drag_start - ImGui::GetMouseDragDelta(0, 0.0f).x / spacing;
 
-        // arrows flank the cover, vertically centred on it
-        ImGui::SetCursorPos(ImVec2(cover_x - arrow - 6, cover_y + (cover - arrow) * 0.5f));
-        if (ImGui::Button("<", ImVec2(arrow, arrow)))
-            carousel_index = (carousel_index - 1 + count) % count;
-        ImGui::SetCursorPos(ImVec2(cover_x + cover + 6, cover_y + (cover - arrow) * 0.5f));
-        if (ImGui::Button(">", ImVec2(arrow, arrow)))
-            carousel_index = (carousel_index + 1) % count;
+        // keep it in range, and once the finger lifts ease towards the nearest entry
+        carousel_pos = std::clamp(carousel_pos, 0.0f, (float)(count - 1));
+        if (!ImGui::IsItemActive()) {
+            float target = std::round(carousel_pos);
+            carousel_pos += (target - carousel_pos) * std::min(1.0f, io.DeltaTime * 12.0f);
+            if (std::abs(target - carousel_pos) < 0.001f) carousel_pos = target;
+        }
+        int centre = (int)std::lround(carousel_pos);
+        carousel_index = view[centre];
 
-        // the cover, used to capture the swipe, play is left to the explicit button below
-        // zero frame padding so an image cover is exactly 'cover' wide and never runs under the arrow
-        ImGui::SetCursorPos(ImVec2(cover_x, cover_y));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-        if (cover_list[carousel_index])
-            ImGui::ImageButton("cover", (ImTextureID)cover_list[carousel_index], ImVec2(cover, cover));
-        else
-            ImGui::Button(display_name(rom_list[carousel_index]).c_str(), ImVec2(cover, cover));
-        ImGui::PopStyleVar();
-
-        // a horizontal drag over the cover flips to the neighbour once it passes the threshold
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
-            float dx = ImGui::GetMouseDragDelta(0).x;
-            if (dx > w * 0.12f) {
-                carousel_index = (carousel_index - 1 + count) % count;
-                ImGui::ResetMouseDragDelta(0);
-            } else if (dx < -w * 0.12f) {
-                carousel_index = (carousel_index + 1) % count;
-                ImGui::ResetMouseDragDelta(0);
+        // draw covers farthest first so the centred one lands on top, side ones shrink and fade
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 org = ImGui::GetWindowPos();
+        const int order[] = {-2, 2, -1, 1, 0};
+        for (int o : order) {
+            int k = centre + o;
+            if (k < 0 || k >= count) continue;
+            int r = view[k];
+            float d = std::min(std::abs(k - carousel_pos), 1.0f);
+            float sz = cover * (1.0f - d * 0.30f);
+            int a = (int)(255 * (1.0f - d * 0.55f));
+            float cx = cover_cx + (k - carousel_pos) * spacing;
+            ImVec2 p0(org.x + cx - sz * 0.5f, org.y + cover_cy - sz * 0.5f);
+            ImVec2 p1(p0.x + sz, p0.y + sz);
+            if (cover_list[r]) {
+                dl->AddImage((ImTextureID)cover_list[r], p0, p1,
+                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+            } else {
+                dl->AddRectFilled(p0, p1, IM_COL32(0x3d, 0x47, 0x03, a), 10.0f);
+                std::string nm = display_name(rom_list[r]);
+                ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
+                dl->AddText(ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f),
+                            IM_COL32(0xE6, 0xED, 0xC7, a), nm.c_str());
             }
         }
 
-        // title under the cover
-        ImGui::SetCursorPos(ImVec2(0, cover_y + cover + h * 0.03f));
-        centre_text(display_name(rom_list[carousel_index]).c_str());
+        // title of the centred entry
+        ImGui::SetCursorPos(ImVec2(0, cover_cy + cover * 0.60f));
+        centre_text(display_name(rom_list[view[centre]]).c_str());
 
         // play button
         float play_w = w * 0.5f;
-        ImGui::SetCursorPos(ImVec2((w - play_w) * 0.5f, cover_y + cover + h * 0.09f));
+        ImGui::SetCursorPos(ImVec2((w - play_w) * 0.5f, cover_cy + cover * 0.60f + h * 0.055f));
         if (ImGui::Button("play", ImVec2(play_w, h * 0.07f)))
-            load_rom(rom_list[carousel_index]);
+            load_rom(rom_list[view[centre]]);
 
         // page indicator, dots while the list is short, a counter once it grows
         std::string page;
         if (count <= 15)
-            for (int i = 0; i < count; i++) page += (i == carousel_index) ? " *" : " .";
+            for (int i = 0; i < count; i++) page += (i == centre) ? " *" : " .";
         else
-            page = std::to_string(carousel_index + 1) + " / " + std::to_string(count);
-        ImGui::SetCursorPos(ImVec2(0, cover_y + cover + h * 0.19f));
+            page = std::to_string(centre + 1) + " / " + std::to_string(count);
+        ImGui::SetCursorPos(ImVec2(0, cover_cy + cover * 0.60f + h * 0.14f));
         centre_text(page.c_str());
     }
 

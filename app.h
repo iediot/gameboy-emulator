@@ -46,7 +46,10 @@ private:
     std::string sprite_path;     // the gameboy bezel sprite
 #if GB_IOS
     std::map<SDL_FingerID, int> touch_buttons; // live fingers to the joypad bit each one holds
-    bool active = true; // false while backgrounded, we must not touch the gpu then
+    bool active = true;             // false while backgrounded, we must not touch the gpu then
+    float carousel_pos = 0.0f;      // continuous scroll position, whole numbers land on a game
+    float carousel_drag_start = 0.0f; // carousel_pos captured when a swipe begins
+    bool show_debug = false;        // false shows games with art, true shows the debug/test roms
 #endif
 
     // private methods

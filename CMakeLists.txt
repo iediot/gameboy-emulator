@@ -39,7 +39,7 @@ if(GB_IOS)
     # asset catalog holding the app icon, xcode runs actool on it during the build
     set(GB_ASSETS ${CMAKE_SOURCE_DIR}/ios/Assets.xcassets)
 
-    add_executable(gameboy_emu MACOSX_BUNDLE ${GB_SOURCES} ${GB_RESOURCES} ${GB_ASSETS})
+    add_executable(gameboy_emu MACOSX_BUNDLE ${GB_SOURCES} ios_import.mm ${GB_RESOURCES} ${GB_ASSETS})
     set_source_files_properties(${GB_RESOURCES} ${GB_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 
     # sdl is built statically from source, brew only ships desktop libs
@@ -57,12 +57,13 @@ if(GB_IOS)
     set(SDL2IMAGE_BACKEND_IMAGEIO OFF CACHE BOOL "" FORCE)
     add_subdirectory(external/SDL_image)
 
-    target_link_libraries(gameboy_emu PRIVATE SDL2::SDL2main SDL2::SDL2-static SDL2_image::SDL2_image-static)
+    target_link_libraries(gameboy_emu PRIVATE SDL2::SDL2main SDL2::SDL2-static SDL2_image::SDL2_image-static "-framework UIKit")
 
     set_target_properties(gameboy_emu PROPERTIES
             MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/ios/Info.plist
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.iediot.gbemu"
-            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+            XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES")
 
     # the simulator needs no signing, a real device uses automatic signing so xcode can pick a team
     if(CMAKE_OSX_SYSROOT MATCHES "simulator")

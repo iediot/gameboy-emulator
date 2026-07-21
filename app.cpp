@@ -53,11 +53,24 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
 void App::init_paths() {
 #if GB_IOS
     char* base = SDL_GetBasePath();
+    char* pref = SDL_GetPrefPath("com.iediot", "gbemu");
     std::string b = base ? base : "";
+    std::string p = pref ? pref : "";
     if (base) SDL_free(base);
+    if (pref) SDL_free(pref);
     sprite_path    = b + "emu-sprite.png"; // full-res ios bezel, the old gameboy.png stays unused
-    artwork_folder = b + "artworks/";
-    rom_folder     = b + "game-roms/";
+    artwork_folder = b + "artworks/";      // read-only, shipped in the bundle
+    rom_folder     = p + "game-roms/";     // writable copy so roms can be added and deleted
+
+    // on first launch seed the writable folder with the roms shipped in the bundle
+    std::error_code ec;
+    std::filesystem::create_directories(rom_folder, ec);
+    if (std::filesystem::is_empty(rom_folder, ec)) {
+        for (const auto& e : std::filesystem::directory_iterator(b + "game-roms/", ec))
+            if (e.path().extension() == ".gb")
+                std::filesystem::copy_file(e.path(), rom_folder + e.path().filename().string(),
+                                           std::filesystem::copy_options::skip_existing, ec);
+    }
 #else
     sprite_path    = "../sprites/gameboy.png";
     artwork_folder = "../artworks/";
