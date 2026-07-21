@@ -50,6 +50,9 @@ private:
     float carousel_pos = 0.0f;      // continuous scroll position, whole numbers land on a game
     float carousel_drag_start = 0.0f; // carousel_pos captured when a swipe begins
     bool show_debug = false;        // false shows games with art, true shows the debug/test roms
+    float carousel_target = 0.0f;   // index the stack is easing towards after a fling
+    float carousel_vel = 0.0f;      // swipe speed in cards/sec, sampled to drive the fling
+    std::vector<std::string> import_prev; // rom_list snapshot taken when the add-game picker opens
 #endif
 
     // private methods

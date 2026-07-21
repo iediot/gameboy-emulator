@@ -9,10 +9,15 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <filesystem>
 #include "app.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+
+// implemented in ios_import.mm
+extern "C" void ios_present_document_picker(const char* dest_dir);
+extern "C" bool ios_take_import_done();
 
 #define GB_TOUCH_DEBUG 0 // set to 1 to tint the touch zones for alignment checks
 
@@ -124,6 +129,27 @@ void App::render_game_ios() {
 
 // swipe carousel, one big cover framed at a time with arrows, a title and a play button
 void App::render_menu_ios() {
+    // a finished import drops a new rom into the folder, pick it up before drawing
+    if (ios_take_import_done()) {
+        scan_roms();
+        int r_new = -1;
+        for (int i = 0; i < (int)rom_list.size(); i++)
+            if (std::find(import_prev.begin(), import_prev.end(), rom_list[i]) == import_prev.end()) {
+                r_new = i;
+                break;
+            }
+        if (r_new >= 0) {
+            show_debug = (cover_list[r_new] == nullptr); // jump to whichever list the new rom lands in
+            int local = 0;
+            for (int i = 0; i < r_new; i++)
+                if ((cover_list[i] != nullptr) != show_debug)
+                    local++;
+            carousel_pos = carousel_target = (float)local;
+        } else {
+            carousel_pos = carousel_target = 0.0f;
+        }
+    }
+
     // clear any hidpi scale imgui's backend left set last frame, else it renders into a corner
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     SDL_RenderSetViewport(renderer, nullptr);
@@ -180,81 +206,117 @@ void App::render_menu_ios() {
     ImGui::SetCursorPos(ImVec2((w - toggle_w) * 0.5f, h * 0.15f));
     if (ImGui::Button(show_debug ? "back to games" : "debug roms", ImVec2(toggle_w, h * 0.05f))) {
         show_debug = !show_debug;
-        carousel_pos = 0.0f;
+        carousel_pos = carousel_target = 0.0f;
     }
 
     if (count == 0) {
         ImGui::SetCursorPos(ImVec2(0, h * 0.45f));
         centre_text(show_debug ? "no debug roms" : "no games bundled");
     } else {
-        // layout of the cover band, all in device pixels
-        float cover = w * 0.60f;      // size of the centred cover
-        float cover_cx = w * 0.5f;    // horizontal centre of the band
-        float cover_cy = h * 0.42f;   // vertical centre of the band
-        float spacing = w * 0.72f;    // distance between neighbouring covers
+        // vertical card stack, the selected game on top, swiping shuffles through and wraps around
+        float cover = w * 0.58f;      // size of the top card
+        float cover_cx = w * 0.5f;    // horizontal centre of the stack
+        float cover_cy = h * 0.36f;   // where the top card sits
+        float spacing = w * 0.5f;     // swipe distance that advances one card
 
-        // a horizontal swipe over the whole band is the only way to move between entries
-        ImGui::SetCursorPos(ImVec2(0, cover_cy - cover * 0.75f));
-        ImGui::InvisibleButton("swipe", ImVec2(w, cover * 1.5f));
-        if (ImGui::IsItemActivated())
+        // swipe anywhere over the stack, with momentum so one flick can pass several cards
+        ImGui::SetCursorPos(ImVec2(0, h * 0.22f));
+        ImGui::InvisibleButton("swipe", ImVec2(w, cover_cy + cover * 0.85f - h * 0.22f));
+        if (ImGui::IsItemActivated()) {
             carousel_drag_start = carousel_pos;
-        if (ImGui::IsItemActive())
-            carousel_pos = carousel_drag_start - ImGui::GetMouseDragDelta(0, 0.0f).x / spacing;
-
-        // keep it in range, and once the finger lifts ease towards the nearest entry
-        carousel_pos = std::clamp(carousel_pos, 0.0f, (float)(count - 1));
-        if (!ImGui::IsItemActive()) {
-            float target = std::round(carousel_pos);
-            carousel_pos += (target - carousel_pos) * std::min(1.0f, io.DeltaTime * 12.0f);
-            if (std::abs(target - carousel_pos) < 0.001f) carousel_pos = target;
+            carousel_vel = 0.0f;
         }
-        int centre = (int)std::lround(carousel_pos);
-        carousel_index = view[centre];
+        if (ImGui::IsItemActive()) {
+            carousel_pos = carousel_drag_start - ImGui::GetMouseDragDelta(0, 0.0f).x / spacing;
+            if (io.DeltaTime > 0.0f)
+                carousel_vel = -io.MouseDelta.x / spacing / io.DeltaTime; // cards per second
+        }
+        if (ImGui::IsItemDeactivated()) {
+            carousel_target = std::round(carousel_pos + carousel_vel * 0.12f); // fling on past several
+            carousel_vel = 0.0f;
+        }
+        if (!ImGui::IsItemActive()) {
+            carousel_pos += (carousel_target - carousel_pos) * std::min(1.0f, io.DeltaTime * 18.0f);
+            if (std::abs(carousel_target - carousel_pos) < 0.001f) carousel_pos = carousel_target;
+        }
 
-        // draw covers farthest first so the centred one lands on top, side ones shrink and fade
+        // positions wrap so the list loops forever
+        auto wrap = [count](int k) { return ((k % count) + count) % count; };
+        int centre = wrap((int)std::lround(carousel_pos));
+        int r_centre = view[centre];
+        carousel_index = r_centre;
+
+        // draw back to front, the card leaving the top flips up and fades over the rest
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 org = ImGui::GetWindowPos();
-        const int order[] = {-2, 2, -1, 1, 0};
-        for (int o : order) {
-            int k = centre + o;
-            if (k < 0 || k >= count) continue;
-            int r = view[k];
-            float d = std::min(std::abs(k - carousel_pos), 1.0f);
-            float sz = cover * (1.0f - d * 0.30f);
-            int a = (int)(255 * (1.0f - d * 0.55f));
-            float cx = cover_cx + (k - carousel_pos) * spacing;
-            ImVec2 p0(org.x + cx - sz * 0.5f, org.y + cover_cy - sz * 0.5f);
-            ImVec2 p1(p0.x + sz, p0.y + sz);
-            if (cover_list[r]) {
-                dl->AddImage((ImTextureID)cover_list[r], p0, p1,
-                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+        int base = (int)std::floor(carousel_pos);
+        int depth = std::min(3, count - 1);
+        float denom = (float)std::max(depth, 1);
+        // gather the visible cards, the front one recedes into the back as it leaves; the deck fans left
+        struct Card { int r; float d, cx, sz; int a; };
+        std::vector<Card> cards;
+        for (int k = base - 1; k <= base + depth; k++) {
+            float eff = k - carousel_pos;
+            if (eff < -1.0f || eff > depth) continue;
+            int r = view[wrap(k)];
+            float d = eff < 0.0f ? -eff * depth : eff; // front card recedes to the back as it leaves
+            float sz = cover * (1.0f - d * 0.05f);
+            float cx = cover_cx - d * (cover * 0.055f); // tight left fan
+            int a = (int)(255 * std::max(0.0f, std::min(1.0f, 1.0f - d / denom))); // opaque up front, fades to the back
+            cards.push_back({r, d, cx, sz, a});
+        }
+        std::sort(cards.begin(), cards.end(), [](const Card& x, const Card& y) { return x.d > y.d; });
+        for (const Card& cd : cards) {
+            float hs = cd.sz * 0.5f;
+            ImVec2 p0(org.x + cd.cx - hs, org.y + cover_cy - hs), p1(org.x + cd.cx + hs, org.y + cover_cy + hs);
+            if (cover_list[cd.r]) {
+                dl->AddImage((ImTextureID)cover_list[cd.r], p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, cd.a));
             } else {
-                dl->AddRectFilled(p0, p1, IM_COL32(0x3d, 0x47, 0x03, a), 10.0f);
-                std::string nm = display_name(rom_list[r]);
+                dl->AddRectFilled(p0, p1, IM_COL32(0x3d, 0x47, 0x03, cd.a), 10.0f);
+                std::string nm = display_name(rom_list[cd.r]);
                 ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                dl->AddText(ImVec2((p0.x + p1.x - ts.x) * 0.5f, (p0.y + p1.y - ts.y) * 0.5f),
-                            IM_COL32(0xE6, 0xED, 0xC7, a), nm.c_str());
+                dl->AddText(ImVec2(org.x + cd.cx - ts.x * 0.5f, org.y + cover_cy - ts.y * 0.5f), IM_COL32(0xE6, 0xED, 0xC7, cd.a), nm.c_str());
             }
         }
 
-        // title of the centred entry
-        ImGui::SetCursorPos(ImVec2(0, cover_cy + cover * 0.60f));
-        centre_text(display_name(rom_list[view[centre]]).c_str());
+        // title of the selected game
+        float title_y = cover_cy + cover * 0.95f;
+        ImGui::SetCursorPos(ImVec2(0, title_y));
+        centre_text(display_name(rom_list[r_centre]).c_str());
 
-        // play button
-        float play_w = w * 0.5f;
-        ImGui::SetCursorPos(ImVec2((w - play_w) * 0.5f, cover_cy + cover * 0.60f + h * 0.055f));
-        if (ImGui::Button("play", ImVec2(play_w, h * 0.07f)))
-            load_rom(rom_list[view[centre]]);
+        // play and delete, side by side
+        float btn_h = h * 0.07f;
+        float play_w = w * 0.34f, del_w = w * 0.22f, gap = w * 0.03f;
+        float row_x = (w - (play_w + gap + del_w)) * 0.5f;
+        float row_y = title_y + h * 0.05f;
+        ImGui::SetCursorPos(ImVec2(row_x, row_y));
+        if (ImGui::Button("play", ImVec2(play_w, btn_h)))
+            load_rom(rom_list[r_centre]);
+        ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.10f, 0.05f, 1.0f));
+        if (ImGui::Button("delete", ImVec2(del_w, btn_h))) {
+            std::error_code ec;
+            std::filesystem::remove(rom_folder + rom_list[r_centre], ec);
+            scan_roms();
+            float prev = (centre > 0) ? (float)(centre - 1) : 0.0f; // sit on the entry before the deleted one
+            carousel_pos = carousel_target = prev;
+        }
+        ImGui::PopStyleColor(3);
 
-        // page indicator, dots while the list is short, a counter once it grows
-        std::string page;
-        if (count <= 15)
-            for (int i = 0; i < count; i++) page += (i == centre) ? " *" : " .";
-        else
-            page = std::to_string(centre + 1) + " / " + std::to_string(count);
-        ImGui::SetCursorPos(ImVec2(0, cover_cy + cover * 0.60f + h * 0.14f));
+        // page indicator
+        std::string page = std::to_string(centre + 1) + " / " + std::to_string(count);
+        ImGui::SetCursorPos(ImVec2(0, row_y + h * 0.09f));
         centre_text(page.c_str());
+    }
+
+    // add game, opens the ios file picker to import a rom into the writable folder
+    float add_w = w * 0.6f;
+    ImGui::SetCursorPos(ImVec2((w - add_w) * 0.5f, h * 0.86f));
+    if (ImGui::Button("add game", ImVec2(add_w, h * 0.06f))) {
+        import_prev = rom_list;                         // snapshot so the new rom can be spotted afterwards
+        ios_present_document_picker(rom_folder.c_str());
     }
 
     ImGui::End();
