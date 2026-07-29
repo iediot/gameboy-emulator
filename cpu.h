@@ -40,6 +40,11 @@ public:
     uint8_t ime_pending = 0;
     bool halted = false;
 
+    //debug to del after
+    bool trace_enabled = false;
+    uint64_t trace_cycles = 0;
+    uint64_t trace_count = 0;
+
     // Timer
     uint16_t internal_div = 0xABCC;
     bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
