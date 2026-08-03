@@ -136,8 +136,11 @@ void App::scan_roms() {
             std::string path = closest_artwork(entry.path().stem().string());
             if (path.empty())
                 cover_list.push_back(nullptr);
-            else
-                cover_list.push_back(IMG_LoadTexture(renderer, path.c_str()));
+            else {
+                SDL_Texture* cover = IMG_LoadTexture(renderer, path.c_str());
+                if (cover) SDL_SetTextureBlendMode(cover, SDL_BLENDMODE_BLEND); // so alpha fades every cover, not just ones shipping an alpha channel
+                cover_list.push_back(cover);
+            }
         }
     }
 }

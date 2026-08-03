@@ -144,9 +144,9 @@ void App::render_menu_ios() {
             for (int i = 0; i < r_new; i++)
                 if ((cover_list[i] != nullptr) != show_debug)
                     local++;
-            carousel_pos = carousel_target = (float)local;
+            carousel_pos = carousel_target = (float)local; carousel_vel = 0.0f;
         } else {
-            carousel_pos = carousel_target = 0.0f;
+            carousel_pos = carousel_target = 0.0f; carousel_vel = 0.0f;
         }
     }
 
@@ -201,13 +201,17 @@ void App::render_menu_ios() {
             view.push_back(i);
     int count = (int)view.size();
 
-    // category toggle, sits just under the title
-    float toggle_w = w * 0.5f;
-    ImGui::SetCursorPos(ImVec2((w - toggle_w) * 0.5f, h * 0.15f));
-    if (ImGui::Button(show_debug ? "back to games" : "debug roms", ImVec2(toggle_w, h * 0.05f))) {
+    // small, subtle category toggle tucked in the top-right corner: "d" for the debug/test roms, "g" for games
+    float tog = w * 0.11f;
+    ImGui::SetCursorPos(ImVec2(w - tog - w * 0.04f, h * 0.055f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.09f, 0.10f, 0.06f, 1.0f));        // same tone as the background
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.13f, 0.15f, 0.08f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.13f, 0.15f, 0.08f, 1.0f));
+    if (ImGui::Button(show_debug ? "g" : "d", ImVec2(tog, h * 0.035f))) {
         show_debug = !show_debug;
-        carousel_pos = carousel_target = 0.0f;
+        carousel_pos = carousel_target = 0.0f; carousel_vel = 0.0f;
     }
+    ImGui::PopStyleColor(3);
 
     if (count == 0) {
         ImGui::SetCursorPos(ImVec2(0, h * 0.45f));
@@ -217,9 +221,10 @@ void App::render_menu_ios() {
         float cover = w * 0.58f;      // size of the top card
         float cover_cx = w * 0.5f;    // horizontal centre of the stack
         float cover_cy = h * 0.36f;   // where the top card sits
-        float spacing = w * 0.5f;     // swipe distance that advances one card
+        float spacing = w * 0.30f;    // swipe distance that advances one card
 
-        // swipe anywhere over the stack, with momentum so one flick can pass several cards
+        // swipe over the fan; real momentum means a hard flick coasts through many cards while a
+        // gentle drag moves one, coasting to a halt under friction before settling on the nearest
         ImGui::SetCursorPos(ImVec2(0, h * 0.22f));
         ImGui::InvisibleButton("swipe", ImVec2(w, cover_cy + cover * 0.85f - h * 0.22f));
         if (ImGui::IsItemActivated()) {
@@ -227,17 +232,19 @@ void App::render_menu_ios() {
             carousel_vel = 0.0f;
         }
         if (ImGui::IsItemActive()) {
-            carousel_pos = carousel_drag_start - ImGui::GetMouseDragDelta(0, 0.0f).x / spacing;
+            float np = carousel_drag_start - ImGui::GetMouseDragDelta(0, 0.0f).x / spacing;
             if (io.DeltaTime > 0.0f)
-                carousel_vel = -io.MouseDelta.x / spacing / io.DeltaTime; // cards per second
-        }
-        if (ImGui::IsItemDeactivated()) {
-            carousel_target = std::round(carousel_pos + carousel_vel * 0.12f); // fling on past several
-            carousel_vel = 0.0f;
-        }
-        if (!ImGui::IsItemActive()) {
-            carousel_pos += (carousel_target - carousel_pos) * std::min(1.0f, io.DeltaTime * 18.0f);
-            if (std::abs(carousel_target - carousel_pos) < 0.001f) carousel_pos = carousel_target;
+                carousel_vel = carousel_vel * 0.3f + ((np - carousel_pos) / io.DeltaTime) * 0.7f; // cards/sec
+            carousel_vel = std::max(-90.0f, std::min(90.0f, carousel_vel));
+            carousel_pos = np;
+        } else if (std::abs(carousel_vel) > 0.4f) {
+            carousel_pos += carousel_vel * io.DeltaTime;    // keep coasting after the finger lifts
+            carousel_vel *= std::exp(-3.5f * io.DeltaTime); // friction bleeds the speed off
+        } else {
+            carousel_vel = 0.0f;                            // slow enough now, settle on the nearest card
+            float target = std::round(carousel_pos);
+            carousel_pos += (target - carousel_pos) * std::min(1.0f, io.DeltaTime * 14.0f);
+            if (std::abs(target - carousel_pos) < 0.001f) carousel_pos = target;
         }
 
         // positions wrap so the list loops forever
@@ -246,26 +253,24 @@ void App::render_menu_ios() {
         int r_centre = view[centre];
         carousel_index = r_centre;
 
-        // draw back to front, the card leaving the top flips up and fades over the rest
+        // horizontal fan: selected game centred and on top, next games to the right, previous ones to the left
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 org = ImGui::GetWindowPos();
         int base = (int)std::floor(carousel_pos);
-        int depth = std::min(3, count - 1);
-        float denom = (float)std::max(depth, 1);
-        // gather the visible cards, the front one recedes into the back as it leaves; the deck fans left
-        struct Card { int r; float d, cx, sz; int a; };
+        struct Card { int r; float rel, cx, sz; int a; };
         std::vector<Card> cards;
-        for (int k = base - 1; k <= base + depth; k++) {
-            float eff = k - carousel_pos;
-            if (eff < -1.0f || eff > depth) continue;
+        for (int k = base - 2; k <= base + 3; k++) {
+            float rel = k - carousel_pos;            // <0 previous (left), >0 next (right)
+            if (std::abs(rel) > 2.6f) continue;
             int r = view[wrap(k)];
-            float d = eff < 0.0f ? -eff * depth : eff; // front card recedes to the back as it leaves
-            float sz = cover * (1.0f - d * 0.05f);
-            float cx = cover_cx - d * (cover * 0.055f); // tight left fan
-            int a = (int)(255 * std::max(0.0f, std::min(1.0f, 1.0f - d / denom))); // opaque up front, fades to the back
-            cards.push_back({r, d, cx, sz, a});
+            float ad = std::min(std::abs(rel), 3.0f);
+            float sz = cover * (1.0f - ad * 0.08f);
+            float cx = cover_cx + rel * (cover * 0.11f); // spread both ways, ~twice the old spacing
+            int a = (int)(255 * std::max(0.0f, std::min(1.0f, 1.0f - ad * 0.4f))); // opaque in front, see-through to the sides
+            cards.push_back({r, rel, cx, sz, a});
         }
-        std::sort(cards.begin(), cards.end(), [](const Card& x, const Card& y) { return x.d > y.d; });
+        // outermost first so the card sliding toward the centre rises on top while the old one slips under
+        std::sort(cards.begin(), cards.end(), [](const Card& x, const Card& y) { return std::abs(x.rel) > std::abs(y.rel); });
         for (const Card& cd : cards) {
             float hs = cd.sz * 0.5f;
             ImVec2 p0(org.x + cd.cx - hs, org.y + cover_cy - hs), p1(org.x + cd.cx + hs, org.y + cover_cy + hs);
@@ -296,14 +301,34 @@ void App::render_menu_ios() {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.10f, 0.05f, 1.0f));
-        if (ImGui::Button("delete", ImVec2(del_w, btn_h))) {
-            std::error_code ec;
-            std::filesystem::remove(rom_folder + rom_list[r_centre], ec);
-            scan_roms();
-            float prev = (centre > 0) ? (float)(centre - 1) : 0.0f; // sit on the entry before the deleted one
-            carousel_pos = carousel_target = prev;
-        }
+        if (ImGui::Button("delete", ImVec2(del_w, btn_h)))
+            ImGui::OpenPopup("confirm_delete");
         ImGui::PopStyleColor(3);
+
+        // a second, deliberate tap is required so a stray delete never wipes a game by accident
+        ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(w * 0.05f, w * 0.05f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f);
+        if (ImGui::BeginPopupModal("confirm_delete", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove)) {
+            ImGui::TextUnformatted(("delete " + display_name(rom_list[r_centre]) + " ?").c_str());
+            ImGui::Dummy(ImVec2(0, h * 0.02f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
+            if (ImGui::Button("delete", ImVec2(w * 0.32f, h * 0.07f))) {
+                std::error_code ec;
+                std::filesystem::remove(rom_folder + rom_list[r_centre], ec);
+                scan_roms();
+                float prev = (centre > 0) ? (float)(centre - 1) : 0.0f;
+                carousel_pos = carousel_target = prev; carousel_vel = 0.0f;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::Button("cancel", ImVec2(w * 0.32f, h * 0.07f)))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar(2);
 
         // page indicator
         std::string page = std::to_string(centre + 1) + " / " + std::to_string(count);
