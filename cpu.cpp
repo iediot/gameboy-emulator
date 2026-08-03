@@ -430,6 +430,18 @@ uint8_t Cpu::step() {
     uint8_t opcode = read_and_tick(PC);
     PC++;
 
+    //debug to del after
+    if (trace_enabled && PC < 0x4000 && trace_count < 5000) {
+        trace_count++;
+        fprintf(stderr,
+            "A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X "
+            "SP:%04X PC:%04X DIV:%04X TIMA:%02X TMA:%02X TAC:%02X IF:%02X IE:%02X IME:%d "
+            "op:%02X\n",
+            A, F, B, C, D, E, H, L, SP, PC - 1,
+            internal_div, mem.read(0xFF05), mem.read(0xFF06), mem.read(0xFF07),
+            mem.read(0xFF0F), mem.read(0xFFFF), IME, opcode);
+    }
+
     switch (opcode)
     {
     case 0x00: // NOP

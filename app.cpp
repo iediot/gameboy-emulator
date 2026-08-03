@@ -152,6 +152,9 @@ void App::load_rom(const std::string& name) {
     ppu = std::make_unique<Ppu>(*mem);
     cpu = std::make_unique<Cpu>(*mem, *ppu);
 
+    //debug to del after
+    cpu->trace_enabled = true;
+
     std::ifstream rom_file(rom_folder + name, std::ios::binary);
     if (!rom_file) {
         std::cerr << "Could not open: " << name << "\n";
