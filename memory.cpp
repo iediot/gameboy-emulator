@@ -267,4 +267,15 @@ void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
         mbc_type = MbcType::MBC5;
     else
         mbc_type = MbcType::NONE;
+
+    data[0xFF00] = 0xCF; // P1
+    data[0xFF02] = 0x7E; // SC
+    data[0xFF07] = 0xF8; // TAC
+    data[0xFF0F] = 0xE1; // IF
+    data[0xFF40] = 0x91; // LCDC
+    data[0xFF41] = 0x85; // STAT
+    data[0xFF46] = 0xFF; // DMA
+    data[0xFF47] = 0xFC; // BGP
+    data[0xFF48] = 0xFF; // OBP0
+    data[0xFF49] = 0xFF; // OBP1
 }
