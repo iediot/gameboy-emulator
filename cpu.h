@@ -42,12 +42,18 @@ public:
 
     //debug to del after
     bool trace_enabled = false;
-    uint64_t trace_cycles = 0;
-    uint64_t trace_count = 0;
+    static constexpr int TRACE_N = 1024;
+    char trace_ring[TRACE_N][176] = {};
+    int  trace_pos = 0;
+    bool trace_full = false;
+    void dump_trace();
+
+    uint64_t total_cycles = 0;
 
     // Timer
     uint16_t internal_div = 0xABCC;
     bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
+    uint8_t tima_reload_delay = 0;
     void tick(uint8_t cycles);
 
     uint8_t read_and_tick(uint16_t address);

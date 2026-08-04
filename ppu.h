@@ -43,6 +43,10 @@ public:
 
     bool frame_ready = false;
 
+    bool stat_line = false;
+
+    uint8_t mode3_extra = 0;
+
     // the draw functions
     void draw_sprite();
     void draw_scanline();

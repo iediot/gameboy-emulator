@@ -203,10 +203,10 @@ void Cpu::rst(uint16_t address) { // helper for the 'rst' (reset) operation
 }
 
 void Cpu::call() { // helper for the 'call' operation
-    tick(4);
     uint8_t low = read_and_tick(PC);
     uint8_t high = read_and_tick(PC + 1);
     PC += 2;
+    tick(4);
     SP--;
     write_and_tick(SP, (PC >> 8) & 0xFF);
     SP--;
@@ -364,17 +364,24 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         }
         bool selected_bit = (internal_div >> bit_position) & 1;
         bool and_result = selected_bit && timer_enable;
+        if (tima_reload_delay > 0 && --tima_reload_delay == 0) {
+            mem.write(0xFF05, mem.read(0xFF06));         // TIMA = TMA
+            mem.write(0xFF0F, mem.read(0xFF0F) | 0x04);  // request timer IRQ
+        }
+
         if (last_and_result && !and_result) {
             if (mem.read(0xFF05) == 0xFF) {
-                mem.write(0xFF05, mem.read(0xFF06)); // reload from TMA
-                mem.write(0xFF0F, mem.read(0xFF0F) | 0x04); // set bit 2 of IF
+                mem.write(0xFF05, 0x00);   // reads as 00 during the delay
+                tima_reload_delay = 4;
             } else {
-                mem.write(0xFF05, mem.read(0xFF05) + 1); // increment TIMA
+                mem.write(0xFF05, mem.read(0xFF05) + 1);
             }
         }
         last_and_result = and_result;
         ppu.step(1);
+        mem.step_dma();
         cycles--;
+        total_cycles++;
     }
 }
 
@@ -385,7 +392,21 @@ uint8_t Cpu::read_and_tick(uint16_t address) {
 
 void Cpu::write_and_tick(uint16_t address, uint8_t value) {
     tick(4);
+    if (address >= 0xDA10 && address <= 0xDA12)
+        fprintf(stderr, "WATCH %04X = %02X  PC:%04X SP:%04X\n",
+                address, value, PC, SP);
     mem.write(address, value);
+}
+
+// debug helper to del after
+void Cpu::dump_trace() {
+    int n     = trace_full ? TRACE_N : trace_pos;
+    int start = trace_full ? trace_pos : 0;
+    for (int i = 0; i < n; i++)
+        fprintf(stderr, "%s\n", trace_ring[(start + i) % TRACE_N]);
+    fprintf(stderr, "--- stack around SP:%04X ---\n", SP);
+    for (int i = -8; i < 8; i++)
+        fprintf(stderr, "  %04X: %02X\n", (uint16_t)(SP + i), mem.read(SP + i));
 }
 
 uint8_t Cpu::step() {
@@ -401,7 +422,7 @@ uint8_t Cpu::step() {
     }
 
     if (IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F) != 0) {
-        tick(8);
+        tick(12);
         uint8_t pending = mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F;
 
         if (pending & 0x01) {
@@ -431,15 +452,19 @@ uint8_t Cpu::step() {
     PC++;
 
     //debug to del after
-    if (trace_enabled && PC < 0x4000 && trace_count < 5000) {
-        trace_count++;
-        fprintf(stderr,
+    if (trace_enabled) {
+        uint16_t bank = (mem.mbc_type == MbcType::MBC1)
+                      ? ((mem.upper_bank << 5) | (mem.rom_bank & 0x1F))
+                      : mem.rom_bank;
+        snprintf(trace_ring[trace_pos], sizeof(trace_ring[0]),
             "A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X "
-            "SP:%04X PC:%04X DIV:%04X TIMA:%02X TMA:%02X TAC:%02X IF:%02X IE:%02X IME:%d "
-            "op:%02X\n",
-            A, F, B, C, D, E, H, L, SP, PC - 1,
-            internal_div, mem.read(0xFF05), mem.read(0xFF06), mem.read(0xFF07),
+            "SP:%04X PC:%04X BANK:%02X DIV:%04X TIMA:%02X TAC:%02X "
+            "IF:%02X IE:%02X IME:%d op:%02X",
+            A, F, B, C, D, E, H, L, SP, (uint16_t)(PC - 1), bank,
+            internal_div, mem.read(0xFF05), mem.read(0xFF07),
             mem.read(0xFF0F), mem.read(0xFFFF), IME, opcode);
+        trace_pos = (trace_pos + 1) % TRACE_N;
+        if (trace_pos == 0) trace_full = true;
     }
 
     switch (opcode)
@@ -663,7 +688,6 @@ uint8_t Cpu::step() {
         }
 
     case 0x20: { // JR NZ, s8
-            tick(4);
             int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (!(F & FLAG_Z)) {
@@ -738,7 +762,6 @@ uint8_t Cpu::step() {
         }
 
     case 0x28: { // JR Z, s8
-            tick(4);
             int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (F & FLAG_Z) {
@@ -802,7 +825,6 @@ uint8_t Cpu::step() {
         }
 
     case 0x30: { // JR NC, s8
-            tick(4);
             int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (!(F & FLAG_C)) {
@@ -866,7 +888,6 @@ uint8_t Cpu::step() {
         }
 
     case 0x38: { // JR C, s8
-            tick(4);
             int8_t offset = static_cast<int8_t>(read_and_tick(PC));
             PC++;
             if (F & FLAG_C) {
@@ -1559,6 +1580,7 @@ uint8_t Cpu::step() {
             tick(4);
             if (!(F & FLAG_Z)) {
                 ret();
+                tick(4);
             }
             break;
         }
@@ -1629,6 +1651,7 @@ uint8_t Cpu::step() {
             tick(4);
             if (F & FLAG_Z) {
                 ret();
+                tick(4);
             }
             break;
         }
@@ -2920,7 +2943,6 @@ uint8_t Cpu::step() {
 
             case 0xFB: { // SET 7, E
                     E = set_bit(7, E);
-                    ime_pending = true;
                     break;
                 }
 
@@ -2945,6 +2967,7 @@ uint8_t Cpu::step() {
                 }
 
             default: {
+                    dump_trace();
                     std::cerr << "Unknown CB opcode 0x" << std::hex
                     << static_cast<int>(cb_opcode) << " at PC = 0x" << PC - 2 << "\n";
                     std::exit(1);
@@ -2986,6 +3009,7 @@ uint8_t Cpu::step() {
             tick(4);
             if (!(F & FLAG_C)) {
                 ret();
+                tick(4);
             }
             break;
         }
@@ -3048,6 +3072,7 @@ uint8_t Cpu::step() {
             tick(4);
             if (F & FLAG_C) {
                 ret();
+                tick(4);
             }
             break;
         }
@@ -3275,6 +3300,7 @@ uint8_t Cpu::step() {
         }
 
     default:
+        dump_trace();
         std::cerr << "Unknown opcode 0x" << std::hex
         << static_cast<int>(opcode) << " at PC = 0x" << PC - 1 << "\n";
         std::exit(1);

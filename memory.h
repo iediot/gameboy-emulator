@@ -44,6 +44,13 @@ public:
     uint8_t mbc = 0;
     MbcType mbc_type;
 
+    bool dma_active = false;
+    uint16_t dma_source = 0;
+    uint8_t dma_index = 0;
+    uint8_t dma_tick = 0;
+    uint8_t dma_delay = 0;
+    void step_dma();
+
     void write_mbc1(uint16_t address, uint8_t value);
     void write_mbc3(uint16_t address, uint8_t value);
     void write_mbc5(uint16_t address, uint8_t value);
@@ -51,6 +58,7 @@ public:
     uint8_t read(uint16_t address);
     void write(uint16_t address, uint8_t value);
     void loadRom(const std::vector<uint8_t>& rom_to_load);
+    uint8_t read_raw(uint16_t address) { return data[address]; }
 };
 
 #endif //GAMEBOY_EMU_MEMORY_H

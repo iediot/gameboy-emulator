@@ -115,8 +115,15 @@ void App::run() {
 
         if (state == AppState::PLAYING) {
             // step until a frame is ready
-            while (!ppu->frame_ready) {
+            uint64_t frame_start = cpu->total_cycles;
+            while (!ppu->frame_ready && cpu->total_cycles - frame_start < 70224) {
                 cpu->step();
+            }
+            if (!ppu->frame_ready) {
+                static bool dumped = false;
+                if (!dumped) { dumped = true; cpu->dump_trace(); }
+                fprintf(stderr, "no vblank: LCDC=%02X LY=%02X PC=%04X BANK=%02X\n",
+                        mem->read(0xFF40), mem->read(0xFF44), cpu->PC, mem->rom_bank);
             }
             ppu->frame_ready = false;
             render_game();

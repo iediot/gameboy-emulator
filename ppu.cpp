@@ -154,9 +154,15 @@ void Ppu::draw_scanline() {
     uint8_t LY = mem.read(LY_ADDR);
     uint8_t LCDC = mem.read(LCDC_ADDR);
 
-    // check if bits 7 and 0 are 0
-    if (!(LCDC & 0x80) || !(LCDC & 0x01))
+    // bg off - white and bg counts as colour 0
+    if (!(LCDC & 0x01)) {
+        for (int x = 0; x < 160; x++) {
+            bg_color_ids[LY][x] = 0;
+            framebuffer[LY][x]  = 0;
+        }
+        draw_sprite();
         return;
+    }
 
     for (int x = 0; x <= 159; x++) {
         // compute the background coordinates
@@ -219,6 +225,16 @@ void Ppu::draw_scanline() {
 }
 
 void Ppu::step(uint8_t cycles) {
+    if (!(mem.read(LCDC_ADDR) & 0x80)) {
+        scanline_cycles = 0;
+        mem.write(LY_ADDR, 0);
+        mem.write(STAT_ADDR, mem.read(STAT_ADDR) & 0xFC);
+        window_line_counter = 0;
+        stat_line = false;
+        prev_mode = 0;
+        return;
+    }
+
     scanline_cycles += cycles;
     uint8_t mode = 0;
 
@@ -229,10 +245,6 @@ void Ppu::step(uint8_t cycles) {
         // set bit 2 of STAT if LY == LYC
         if (mem.read(LY_ADDR) == mem.read(LYC_ADDR))
             mem.write(STAT_ADDR, mem.read(STAT_ADDR) | 0x04);
-        // raise the STAT interrupt if LY == LYC and if STAT bit 6 is set
-        if (mem.read(LY_ADDR) == mem.read(LYC_ADDR) &&
-            (mem.read(STAT_ADDR) & 0x40))
-            mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x02);
         // if LY != LYC clear bit 2 of STAT
         if (mem.read(LY_ADDR) != mem.read(LYC_ADDR))
             mem.write(STAT_ADDR, mem.read(STAT_ADDR) & ~0x04);
@@ -247,25 +259,30 @@ void Ppu::step(uint8_t cycles) {
         }
     }
 
+    if (scanline_cycles == 80)
+        mode3_extra = mem.read(SCX_ADDR) & 7;
+
     if (mem.read(LY_ADDR) >= 144) { // mode 1 - VBlank
         mode = 1;
     } else if (scanline_cycles < 80) { // mode 2 - OAM scan
         mode = 2;
-    } else if (scanline_cycles < 252) { // mode 3 - Drawing
+    } else if (scanline_cycles < 252 + mode3_extra) { // mode 3 - Drawing
         mode = 3;
     } else { // mode 0 - HBlank
         mode = 0;
     }
 
-    if (prev_mode != mode) {
-        uint8_t STAT = mem.read(STAT_ADDR);
-        if (mode == 0 && (STAT & 0x08))
-            mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x02);
-        if (mode == 1 && (STAT & 0x10))
-            mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x02);
-        if (mode == 2 && (STAT & 0x20))
-            mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x02);
-    }
+    uint8_t STAT = mem.read(STAT_ADDR);
+    bool coincidence = mem.read(LY_ADDR) == mem.read(LYC_ADDR);
+
+    bool line = (mode == 0 && (STAT & 0x08))
+             || (mode == 1 && (STAT & 0x10))
+             || (mode == 2 && (STAT & 0x20))
+             || (coincidence && (STAT & 0x40));
+
+    if (line && !stat_line)
+        mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x02);
+    stat_line = line;
 
     mem.write(STAT_ADDR, (mem.read(STAT_ADDR) & 0xFC) | mode);
 

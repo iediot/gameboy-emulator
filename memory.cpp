@@ -3,6 +3,7 @@
 //
 
 #include <iostream>
+#include <cstdio>
 #include "memory.h"
 
 void Memory::write_mbc1(uint16_t address, uint8_t value) {
@@ -44,6 +45,9 @@ void Memory::write_mbc3(uint16_t address, uint8_t value) {
 }
 
 void Memory::write_mbc5(uint16_t address, uint8_t value) {
+    if (address >= 0x0000 && address <= 0x1FFF) {
+        ram_enabled = ((value & 0x0F) == 0x0A);
+    }
     if (address >= 0x4000 && address <= 0x5FFF) {
         ram_bank = value & 0x0F;  // MBC5 supports up to 16 RAM banks
     }
@@ -66,8 +70,21 @@ void Memory::sync_div(uint8_t value) {
     data[0xFF04] = value;
 }
 
-uint8_t Memory::read(uint16_t address)
-{
+void Memory::step_dma() {
+    if (!dma_active) return;
+    if (++dma_tick < 4) return;
+    dma_tick = 0;
+    if (dma_delay) {
+        dma_delay--; return;
+    }
+    data[0xFE00 + dma_index] = read(dma_source + dma_index);
+    if (++dma_index == 160) dma_active = false;
+}
+
+uint8_t Memory::read(uint16_t address) {
+    if (address >= 0xE000 && address <= 0xFDFF)
+        address -= 0x2000;
+
     // bank 0
     if (address >= 0x0000 && address <= 0x3FFF) {
         uint16_t bank = 0;
@@ -103,6 +120,7 @@ uint8_t Memory::read(uint16_t address)
         else
             bank = ram_bank;
         size_t offset = bank * 0x2000 + (address - 0xA000);
+        offset %= external_ram.size();
         return external_ram[offset];
     }
 
@@ -129,10 +147,23 @@ uint8_t Memory::read(uint16_t address)
         return result;
     }
 
+    if (address >= 0xFE00 && address <= 0xFE9F && dma_active)
+        return 0xFF;
+
+    uint8_t mode = data[0xFF41] & 0x03;
+    bool lcd_on  = data[0xFF40] & 0x80;
+    if (lcd_on && mode == 3 && address >= 0x8000 && address <= 0x9FFF)
+        return 0xFF;
+    if (lcd_on && mode >= 2  && address >= 0xFE00 && address <= 0xFE9F)
+        return 0xFF;
+
     return data[address];
 }
 
 void Memory::write(uint16_t address, uint8_t value) {
+    if (address >= 0xE000 && address <= 0xFDFF)
+        address -= 0x2000;
+
     if (address < 0x8000) {
         switch (mbc_type) {
             case MbcType::MBC1: write_mbc1(address, value); break;
@@ -154,6 +185,7 @@ void Memory::write(uint16_t address, uint8_t value) {
         else
             bank = ram_bank;
         size_t offset = bank * 0x2000 + (address - 0xA000);
+        offset %= external_ram.size();
         external_ram[offset] = value;
         return;
     }
@@ -174,13 +206,29 @@ void Memory::write(uint16_t address, uint8_t value) {
 
     // DMA
     if (address == 0xFF46) {
-        uint16_t source = value << 8;
-        for (int i = 0; i < 160; i++) {
-            data[0xFE00 + i] = data[source + i];
-        }
+        fprintf(stderr, "DMASTART before src=%04X\n", dma_source);
         data[address] = value;
+        dma_source = value << 8;
+        dma_index  = 0;
+        dma_tick   = 0;
+        dma_delay  = 2;
+        dma_active = true;
+        fprintf(stderr, "DMASTART after src=%04X\n", dma_source);
         return;
     }
+
+    if (address >= 0xFE00 && address <= 0xFE9F) {
+        fprintf(stderr, "OAMW %04X=%02X dma=%d idx=%d\n",
+                address, value, dma_active, dma_index);
+        if (dma_active) return;
+    }
+
+    uint8_t mode = data[0xFF41] & 0x03;
+    bool lcd_on  = data[0xFF40] & 0x80;
+    if (lcd_on && mode == 3 && address >= 0x8000 && address <= 0x9FFF)
+        value = 0xFF;
+    if (lcd_on && mode >= 2  && address >= 0xFE00 && address <= 0xFE9F)
+        value = 0xFF;
 
     data[address] = value;
 
