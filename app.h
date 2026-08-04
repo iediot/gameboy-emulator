@@ -34,6 +34,10 @@ private:
     SDL_Renderer* renderer;
     SDL_Texture* texture;
     SDL_Texture* gameboy_sprite;
+    SDL_Texture* cartridge_sprite;
+    SDL_Texture* cartridge_shadow;
+    float shadow_pad_x = 0.0f;
+    float shadow_pad_y = 0.0f;
     AppState state;
     std::unique_ptr<Memory> mem;
     std::unique_ptr<Cpu> cpu;
@@ -44,6 +48,7 @@ private:
     std::string rom_folder;      // where .gb files are read from
     std::string artwork_folder;  // where cover art .png files live
     std::string sprite_path;     // the gameboy bezel sprite
+    std::string cartridge_path;  // the cartridge shell the covers sit in
     std::string settings_path;   // where the scale mode, frame cap and keybinds are stored
 
     int carousel_index = 0;
@@ -57,6 +62,7 @@ private:
     int settings_tab = 0;
     int rebind_target = -1;
     int fps_index = 1;
+    bool vsync = true;
     uint64_t last_present = 0;
     bool in_live_resize = false;
     SDL_Keycode keybinds[8];
@@ -68,6 +74,7 @@ private:
 
     // private methods
     void init_paths();
+    void build_shadow();
     void load_settings();
     void save_settings();
     void scan_roms();

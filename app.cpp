@@ -52,7 +52,9 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
 #if GB_DESKTOP
     SDL_SetWindowMinimumSize(window, 480, 360);
 #endif
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer)
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, 160, 144);
     SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest); // keep the gameboy pixels sharp when scaled up
@@ -60,6 +62,13 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
 #if GB_IOS
     gameboy_sprite = IMG_LoadTexture(renderer, sprite_path.c_str());
 #endif
+    cartridge_sprite = IMG_LoadTexture(renderer, cartridge_path.c_str());
+    if (cartridge_sprite) {
+        SDL_SetTextureBlendMode(cartridge_sprite, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(cartridge_sprite, SDL_ScaleModeLinear);
+    }
+    cartridge_shadow = nullptr;
+    build_shadow();
     keybinds[0] = SDLK_RIGHT;
     keybinds[1] = SDLK_LEFT;
     keybinds[2] = SDLK_UP;
@@ -69,6 +78,7 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
     keybinds[6] = SDLK_BACKSPACE;
     keybinds[7] = SDLK_RETURN;
     load_settings();
+    SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
     // imgui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -124,6 +134,7 @@ void App::init_paths() {
     if (base) SDL_free(base);
     if (pref) SDL_free(pref);
     sprite_path    = b + "emu-sprite.png"; // full-res ios bezel, the old gameboy.png stays unused
+    cartridge_path = b + "cartridge.png";
     artwork_folder = b + "artworks/";      // read-only, shipped in the bundle
     rom_folder     = p + "game-roms/";     // writable copy so roms can be added and deleted
     settings_path  = p + "settings.txt";
@@ -139,6 +150,7 @@ void App::init_paths() {
     }
 #else
     sprite_path    = "../sprites/gameboy.png";
+    cartridge_path = "../sprites/cartridge.png";
     artwork_folder = "../artworks/";
     rom_folder     = "../roms/game-roms/";
 
@@ -146,6 +158,78 @@ void App::init_paths() {
     settings_path = std::string(pref ? pref : "") + "settings.txt";
     if (pref) SDL_free(pref);
 #endif
+}
+
+void App::build_shadow() {
+    SDL_Surface* raw = IMG_Load(cartridge_path.c_str());
+    if (!raw) return;
+    SDL_Surface* src = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(raw);
+    if (!src) return;
+
+    const int radius = 20;
+    const int pad = 80;
+    int sw = src->w, sh = src->h;
+    int bw = sw + pad * 2, bh = sh + pad * 2;
+
+    std::vector<float> a(bw * bh, 0.0f), b(bw * bh, 0.0f);
+    for (int y = 0; y < sh; y++) {
+        const Uint8* row = (const Uint8*)src->pixels + y * src->pitch;
+        for (int x = 0; x < sw; x++)
+            a[(y + pad) * bw + (x + pad)] = row[x * 4 + 3] / 255.0f;
+    }
+    SDL_FreeSurface(src);
+
+    auto blur_h = [&](const std::vector<float>& in, std::vector<float>& out) {
+        float inv = 1.0f / (2 * radius + 1);
+        for (int y = 0; y < bh; y++) {
+            const float* r = &in[y * bw];
+            float* o = &out[y * bw];
+            float sum = 0.0f;
+            for (int i = -radius; i <= radius; i++) sum += r[std::clamp(i, 0, bw - 1)];
+            for (int x = 0; x < bw; x++) {
+                o[x] = sum * inv;
+                sum += r[std::clamp(x + radius + 1, 0, bw - 1)] - r[std::clamp(x - radius, 0, bw - 1)];
+            }
+        }
+    };
+    auto blur_v = [&](const std::vector<float>& in, std::vector<float>& out) {
+        float inv = 1.0f / (2 * radius + 1);
+        for (int x = 0; x < bw; x++) {
+            float sum = 0.0f;
+            for (int i = -radius; i <= radius; i++) sum += in[std::clamp(i, 0, bh - 1) * bw + x];
+            for (int y = 0; y < bh; y++) {
+                out[y * bw + x] = sum * inv;
+                sum += in[std::clamp(y + radius + 1, 0, bh - 1) * bw + x]
+                     - in[std::clamp(y - radius, 0, bh - 1) * bw + x];
+            }
+        }
+    };
+    for (int pass = 0; pass < 3; pass++) {
+        blur_h(a, b);
+        blur_v(b, a);
+    }
+
+    SDL_Surface* out = SDL_CreateRGBSurfaceWithFormat(0, bw, bh, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!out) return;
+    for (int y = 0; y < bh; y++) {
+        Uint8* row = (Uint8*)out->pixels + y * out->pitch;
+        for (int x = 0; x < bw; x++) {
+            float v = std::min(1.0f, a[y * bw + x]);
+            row[x * 4 + 0] = 0;
+            row[x * 4 + 1] = 0;
+            row[x * 4 + 2] = 0;
+            row[x * 4 + 3] = (Uint8)(v * 255.0f);
+        }
+    }
+    cartridge_shadow = SDL_CreateTextureFromSurface(renderer, out);
+    SDL_FreeSurface(out);
+    if (cartridge_shadow) {
+        SDL_SetTextureBlendMode(cartridge_shadow, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(cartridge_shadow, SDL_ScaleModeLinear);
+        shadow_pad_x = (float)pad / (float)sw;
+        shadow_pad_y = (float)pad / (float)sh;
+    }
 }
 
 void App::load_settings() {
@@ -157,6 +241,8 @@ void App::load_settings() {
             int v; if (f >> v && v >= 0 && v <= 2) scale_mode = (ScaleMode)v;
         } else if (key == "fps") {
             int v; if (f >> v && v >= 0 && v <= 5) fps_index = v;
+        } else if (key == "vsync") {
+            int v; if (f >> v) vsync = (v != 0);
         } else if (key == "key") {
             int i; long long v;
             if (f >> i >> v && i >= 0 && i < 8) keybinds[i] = (SDL_Keycode)v;
@@ -172,6 +258,7 @@ void App::save_settings() {
     if (!f) return;
     f << "scale " << (int)scale_mode << "\n";
     f << "fps " << fps_index << "\n";
+    f << "vsync " << (vsync ? 1 : 0) << "\n";
     for (int i = 0; i < 8; i++)
         f << "key " << i << " " << (long long)keybinds[i] << "\n";
 }
@@ -196,6 +283,8 @@ App::~App() {
     // sdl
     SDL_DestroyTexture(texture);
     SDL_DestroyTexture(gameboy_sprite);
+    SDL_DestroyTexture(cartridge_sprite);
+    SDL_DestroyTexture(cartridge_shadow);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -246,7 +335,10 @@ void App::scan_roms() {
                 cover_list.push_back(nullptr);
             else {
                 SDL_Texture* cover = IMG_LoadTexture(renderer, path.c_str());
-                if (cover) SDL_SetTextureBlendMode(cover, SDL_BLENDMODE_BLEND); // so alpha fades every cover, not just ones shipping an alpha channel
+                if (cover) {
+                    SDL_SetTextureBlendMode(cover, SDL_BLENDMODE_BLEND); // so alpha fades every cover, not just ones shipping an alpha channel
+                    SDL_SetTextureScaleMode(cover, SDL_ScaleModeLinear);
+                }
                 cover_list.push_back(cover);
             }
         }
@@ -454,8 +546,9 @@ void App::draw_settings(float w, float h) {
 
         ImGui::SetCursorPos(ImVec2(pad, body_y));
         ImGui::BeginChild("settings_body", ImVec2(inner_w, body_h), false);
-        float label_w = ImGui::GetContentRegionAvail().x * 0.35f;
         float ctrl_gap = 18.0f;
+        float ctrl_w = 132.0f;
+        float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         if (settings_tab == 0) {
             bool any_open = false;
             auto combo_row = [&](const char* text, const char* id,
@@ -463,20 +556,23 @@ void App::draw_settings(float w, float h) {
                 int picked = cur;
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(text);
-                ImGui::SameLine(label_w);
+                ImGui::SameLine();
 
-                float cw = ImGui::GetContentRegionAvail().x - ctrl_gap;
+                float cw = ctrl_w;
                 float chh = ImGui::GetFrameHeight();
                 ImVec2 cpos = ImGui::GetCursorScreenPos();
+                cpos.x = right_edge - ctrl_gap - cw;
+                ImGui::SetCursorScreenPos(cpos);
                 bool covered = any_open;
 
                 ImGui::SetNextItemWidth(cw);
                 ImGui::SetNextWindowSizeConstraints(ImVec2(cw, 0.0f), ImVec2(cw, 99999.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
                 ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0, 0, 0, 0));
-                bool open = ImGui::BeginCombo(id, items[cur], ImGuiComboFlags_NoArrowButton);
+                bool open = ImGui::BeginCombo(id, "", ImGuiComboFlags_NoArrowButton);
                 ImGui::PopStyleColor();
                 ImGui::PopStyleVar();
+                bool hot_c = open || ImGui::IsItemHovered();
                 if (open) {
                     any_open = true;
                     ImGui::SetWindowPos(ImVec2(cpos.x, cpos.y + chh));
@@ -512,7 +608,8 @@ void App::draw_settings(float w, float h) {
                                                      : IM_COL32(46, 53, 4, 255), 5.0f, fl);
                         }
                         ImVec2 its = ImGui::CalcTextSize(items[i]);
-                        pdl->AddText(ImVec2(cpos.x + 12.0f, ip.y + (item_h - its.y) * 0.5f),
+                        pdl->AddText(ImVec2(cpos.x + cw - 12.0f - its.x,
+                                            ip.y + (item_h - its.y) * 0.5f),
                                      IM_COL32(0xE6, 0xED, 0xC7, 255), items[i]);
                         ImGui::PopID();
                     }
@@ -524,9 +621,11 @@ void App::draw_settings(float w, float h) {
                 if (!covered) {
                     ImDrawList* fg = ImGui::GetForegroundDrawList();
                     fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh),
-                                      IM_COL32(61, 71, 5, 255), 8.0f);
+                                      hot_c ? IM_COL32(87, 102, 5, 255)
+                                            : IM_COL32(61, 71, 5, 255), 8.0f);
                     ImVec2 cts = ImGui::CalcTextSize(items[cur]);
-                    fg->AddText(ImVec2(cpos.x + 12.0f, cpos.y + (chh - cts.y) * 0.5f),
+                    fg->AddText(ImVec2(cpos.x + cw - 12.0f - cts.x,
+                                       cpos.y + (chh - cts.y) * 0.5f),
                                 IM_COL32(0xE6, 0xED, 0xC7, 255), items[cur]);
                 }
                 return picked;
@@ -540,18 +639,58 @@ void App::draw_settings(float w, float h) {
                 fps_index = fps;
                 save_settings();
             }
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("vsync");
+            ImGui::SameLine();
+
+            float fh = ImGui::GetFrameHeight();
+            float th = fh * 0.70f;
+            float tw = th * 1.95f;
+            ImVec2 tp = ImGui::GetCursorScreenPos();
+            tp.x = right_edge - ctrl_gap - tw;
+            ImGui::SetCursorScreenPos(tp);
+            bool toggled = ImGui::InvisibleButton("##vsync", ImVec2(tw, fh));
+            bool hot_t = ImGui::IsItemHovered();
+            float ty = tp.y + (fh - th) * 0.5f;
+            ImDrawList* tdl = ImGui::GetWindowDrawList();
+            ImU32 track = vsync ? (hot_t ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255))
+                                : (hot_t ? IM_COL32(52, 60, 4, 255)  : IM_COL32(38, 44, 3, 255));
+            tdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
+            float kr = th * 0.5f - 3.0f;
+            float kx = vsync ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
+            tdl->AddCircleFilled(ImVec2(kx, ty + th * 0.5f), kr,
+                                 IM_COL32(255, 255, 255, 255), 24);
+            if (toggled) {
+                vsync = !vsync;
+                SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
+                save_settings();
+            }
         } else {
             const char* names[8] = {"right", "left", "up", "down", "a", "b", "select", "start"};
-            for (int i = 0; i < 8; i++) {
+            const int order[8] = {2, 3, 1, 0, 4, 5, 6, 7};
+            for (int k = 0; k < 8; k++) {
+                int i = order[k];
                 ImGui::PushID(i);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(names[i]);
-                ImGui::SameLine(label_w);
+                ImGui::SameLine();
                 bool waiting = (rebind_target == i);
                 if (waiting) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.40f, 0.47f, 0.03f, 1.0f));
-                const char* label = waiting ? "press a key" : SDL_GetKeyName(keybinds[i]);
-                if (ImGui::Button(label, ImVec2(ImGui::GetContentRegionAvail().x - ctrl_gap, 0)))
+                std::string label = waiting ? "press a key" : SDL_GetKeyName(keybinds[i]);
+                for (char& ch : label) ch = (char)std::tolower((unsigned char)ch);
+                if (!waiting) {
+                    SDL_Keycode kc = keybinds[i];
+                    if (kc == SDLK_UP || kc == SDLK_DOWN || kc == SDLK_LEFT || kc == SDLK_RIGHT)
+                        label += " arrow";
+                }
+                ImVec2 bp = ImGui::GetCursorScreenPos();
+                bp.x = right_edge - ctrl_gap - ctrl_w;
+                ImGui::SetCursorScreenPos(bp);
+                ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(1.0f, 0.5f));
+                if (ImGui::Button(label.c_str(), ImVec2(ctrl_w, 0)))
                     rebind_target = waiting ? -1 : i;
+                ImGui::PopStyleVar();
                 if (waiting) ImGui::PopStyleColor();
                 ImGui::PopID();
             }
@@ -818,9 +957,9 @@ void App::render_menu() {
     if (count == 0) {
         centre_text(show_debug ? "no test roms" : "no games", h * 0.45f);
     } else {
-        float cover    = h * 0.42f;
+        float cover    = h * 0.50f;
         float cover_cx = w * 0.5f;
-        float cover_cy = h * 0.42f;
+        float cover_cy = h * 0.36f;
         float spacing  = cover * 0.55f;
 
         if (!settings_open) {
@@ -829,8 +968,8 @@ void App::render_menu() {
             if (io.MouseWheel != 0.0f) carousel_vel += (io.MouseWheel > 0.0f ? -3.5f : 3.5f);
         }
 
-        ImGui::SetCursorPos(ImVec2(0, cover_cy - cover * 0.75f));
-        ImGui::InvisibleButton("swipe", ImVec2(w, cover * 1.5f));
+        ImGui::SetCursorPos(ImVec2(0, cover_cy - cover * 0.60f));
+        ImGui::InvisibleButton("swipe", ImVec2(w, cover * 1.20f));
         if (ImGui::IsItemActivated()) {
             carousel_drag_start = carousel_pos;
             carousel_vel = 0.0f;
@@ -863,42 +1002,78 @@ void App::render_menu() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 org = ImGui::GetWindowPos();
         int base = (int)std::floor(carousel_pos);
-        struct Card { int r; float rel, cx, sz; int a; };
+        struct Card { int r; float rel, cx, sz; };
         std::vector<Card> cards;
-        for (int k = base - 3; k <= base + 4; k++) {
+        int span = (int)std::ceil((w * 0.5f) / (cover * 0.62f)) + 1;
+        for (int k = base - span; k <= base + span + 1; k++) {
             float rel = k - carousel_pos;
-            if (std::abs(rel) > 3.2f) continue;
-            float ad = std::min(std::abs(rel), 3.5f);
-            cards.push_back({view[wrap(k)], rel,
-                             cover_cx + rel * (cover * 0.62f),
-                             cover * (1.0f - ad * 0.10f),
-                             (int)(255 * std::max(0.0f, 1.0f - ad * 0.26f))});
+            float cx  = cover_cx + rel * (cover * 0.62f);
+            float sz  = cover * std::max(0.45f, 1.0f - std::abs(rel) * 0.10f);
+            float half = sz * 0.5f;
+            if (cx + half < 0.0f || cx - half > w) continue;
+            cards.push_back({view[wrap(k)], rel, cx, sz});
         }
         std::sort(cards.begin(), cards.end(),
                   [](const Card& x, const Card& y) { return std::abs(x.rel) > std::abs(y.rel); });
+        const float cart_ar = 700.0f / 800.0f;
+        const float slot_x0 = 0.114f, slot_x1 = 0.882f;
+        const float slot_y0 = 0.280f, slot_y1 = 0.896f;
         for (const Card& cd : cards) {
-            float hs = cd.sz * 0.5f;
-            ImVec2 p0(org.x + cd.cx - hs, org.y + cover_cy - hs);
-            ImVec2 p1(org.x + cd.cx + hs, org.y + cover_cy + hs);
+            float cart_h = cd.sz;
+            float cart_w = cd.sz * cart_ar;
+            ImVec2 p0(org.x + cd.cx - cart_w * 0.5f, org.y + cover_cy - cart_h * 0.5f);
+            ImVec2 p1(p0.x + cart_w, p0.y + cart_h);
+            ImU32 tint = IM_COL32(255, 255, 255, 255);
+
+            if (cartridge_shadow) {
+                float px = cart_w * shadow_pad_x;
+                float py = cart_h * shadow_pad_y;
+                float drop = cart_h * 0.035f;
+                dl->AddImage((ImTextureID)cartridge_shadow,
+                             ImVec2(p0.x - px, p0.y - py + drop),
+                             ImVec2(p1.x + px, p1.y + py + drop),
+                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
+            }
+            if (cartridge_sprite)
+                dl->AddImage((ImTextureID)cartridge_sprite, p0, p1,
+                             ImVec2(0, 0), ImVec2(1, 1), tint);
+
+            ImVec2 s0(p0.x + cart_w * slot_x0, p0.y + cart_h * slot_y0);
+            ImVec2 s1(p0.x + cart_w * slot_x1, p0.y + cart_h * slot_y1);
+            float slot_w = s1.x - s0.x;
+            float slot_h = s1.y - s0.y;
+            float round  = slot_h * 0.06f;
             if (cover_list[cd.r]) {
-                dl->AddImage((ImTextureID)cover_list[cd.r], p0, p1,
-                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, cd.a));
+                int tw = 1, th = 1;
+                SDL_QueryTexture(cover_list[cd.r], nullptr, nullptr, &tw, &th);
+                float src_ar  = (float)tw / (float)th;
+                float slot_ar = slot_w / slot_h;
+                float art_w = slot_w, art_h = slot_h;
+                if (src_ar > slot_ar) art_h = slot_w / src_ar;
+                else                  art_w = slot_h * src_ar;
+                art_w *= 0.97f;
+                art_h *= 0.97f;
+                ImVec2 d0((s0.x + s1.x) * 0.5f - art_w * 0.5f, s0.y);
+                ImVec2 d1(d0.x + art_w, d0.y + art_h);
+                dl->AddImageRounded((ImTextureID)cover_list[cd.r], d0, d1,
+                                    ImVec2(0, 0), ImVec2(1, 1), tint, round);
             } else {
-                dl->AddRectFilled(p0, p1, IM_COL32(0x3d, 0x47, 0x03, cd.a), 10.0f);
+                dl->AddRectFilled(s0, s1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
                 std::string nm = display_name(rom_list[cd.r]);
                 ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                dl->AddText(ImVec2(org.x + cd.cx - ts.x * 0.5f, org.y + cover_cy - ts.y * 0.5f),
-                            IM_COL32(0xE6, 0xED, 0xC7, cd.a), nm.c_str());
+                dl->AddText(ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
+                                   (s0.y + s1.y) * 0.5f - ts.y * 0.5f),
+                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
             }
         }
 
-        float title_y = cover_cy + cover * 0.62f;
+        float title_y = cover_cy + cover * 0.58f;
         centre_text(display_name(rom_list[r_centre]).c_str(), title_y);
 
         float btn_h  = h * 0.09f;
         float play_w = w * 0.14f, del_w = w * 0.10f, gap = w * 0.015f;
         float row_x  = (w - (play_w + gap + del_w)) * 0.5f;
-        float row_y  = title_y + h * 0.06f;
+        float row_y  = title_y + h * 0.05f;
 
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
         if (ImGui::Button("play", ImVec2(play_w, btn_h)))
@@ -937,11 +1112,11 @@ void App::render_menu() {
         ImGui::PopStyleVar(2);
 
         std::string page = std::to_string(centre + 1) + " / " + std::to_string(count);
-        centre_text(page.c_str(), row_y + btn_h + h * 0.025f);
+        centre_text(page.c_str(), row_y + btn_h + h * 0.02f);
     }
 
     float add_w = w * 0.16f;
-    ImGui::SetCursorPos(ImVec2((w - add_w) * 0.5f, h * 0.85f));
+    ImGui::SetCursorPos(ImVec2((w - add_w) * 0.5f, h * 0.88f));
     if (ImGui::Button("add game", ImVec2(add_w, h * 0.07f)))
         add_game();
 
