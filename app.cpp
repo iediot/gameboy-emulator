@@ -36,25 +36,71 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
     // sdl
     SDL_Init(SDL_INIT_VIDEO);
     init_paths();
+#if GB_IOS
+    win_w = 600;
+    win_h = 1000;
+#endif
+    keybinds[0] = SDLK_RIGHT;
+    keybinds[1] = SDLK_LEFT;
+    keybinds[2] = SDLK_UP;
+    keybinds[3] = SDLK_DOWN;
+    keybinds[4] = SDLK_z;
+    keybinds[5] = SDLK_x;
+    keybinds[6] = SDLK_BACKSPACE;
+    keybinds[7] = SDLK_RETURN;
+    load_settings();
+    // imgui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    setup_style();
+    create_video();
+#if GB_DESKTOP
+    // nfd
+    NFD_Init();
+#endif
+
+    last_present = SDL_GetPerformanceCounter();
+    scan_roms();
+}
+
+static bool position_on_a_display(int x, int y, int w, int h) {
+    SDL_Rect win = {x, y, w, h};
+    for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
+        SDL_Rect bounds, out;
+        if (SDL_GetDisplayUsableBounds(i, &bounds) != 0) continue;
+        if (SDL_IntersectRect(&win, &bounds, &out) && out.w > 120 && out.h > 80)
+            return true;
+    }
+    return false;
+}
+
+void App::create_video() {
     Uint32 win_flags = SDL_WINDOW_SHOWN;
-    int win_w = 600, win_h = 1000;
 #if GB_IOS
     win_flags |= SDL_WINDOW_ALLOW_HIGHDPI; // back the renderer at native pixels, not an upscaled buffer
 #endif
 #if GB_DESKTOP
     win_flags |= SDL_WINDOW_RESIZABLE;
-    win_w = 1280;
-    win_h = 720;
+    if (hidpi) win_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
+    int px = SDL_WINDOWPOS_CENTERED, py = SDL_WINDOWPOS_CENTERED;
+#if GB_DESKTOP
+    if (have_win_pos && position_on_a_display(win_x, win_y, win_w, win_h)) {
+        px = win_x;
+        py = win_y;
+    }
 #endif
     window = SDL_CreateWindow("GBEmulator", // window title
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, // center the window
-        win_w, win_h, win_flags);
+        px, py, win_w, win_h, win_flags);
 #if GB_DESKTOP
     SDL_SetWindowMinimumSize(window, 480, 360);
 #endif
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer)
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
+
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, 160, 144);
     SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest); // keep the gameboy pixels sharp when scaled up
@@ -68,32 +114,36 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
         SDL_SetTextureScaleMode(cartridge_sprite, SDL_ScaleModeLinear);
     }
     cartridge_shadow = nullptr;
+    rect_shadow = nullptr;
     build_shadow();
-    keybinds[0] = SDLK_RIGHT;
-    keybinds[1] = SDLK_LEFT;
-    keybinds[2] = SDLK_UP;
-    keybinds[3] = SDLK_DOWN;
-    keybinds[4] = SDLK_z;
-    keybinds[5] = SDLK_x;
-    keybinds[6] = SDLK_BACKSPACE;
-    keybinds[7] = SDLK_RETURN;
-    load_settings();
-    SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
-    // imgui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    setup_style();
+
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 #if GB_DESKTOP
-    // nfd
-    NFD_Init();
     SDL_AddEventWatch(resize_watch, this);
 #endif
+}
 
-    last_present = SDL_GetPerformanceCounter();
-    scan_roms();
+void App::destroy_video() {
+#if GB_DESKTOP
+    SDL_DelEventWatch(resize_watch, this);
+#endif
+    SDL_GetWindowSize(window, &win_w, &win_h);
+    SDL_GetWindowPosition(window, &win_x, &win_y);
+    have_win_pos = true;
+    ImGui_ImplSDLRenderer2_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    for (SDL_Texture* cover : cover_list)
+        if (cover)
+            SDL_DestroyTexture(cover);
+    cover_list.clear();
+    SDL_DestroyTexture(texture);
+    SDL_DestroyTexture(gameboy_sprite);
+    SDL_DestroyTexture(cartridge_sprite);
+    SDL_DestroyTexture(cartridge_shadow);
+    SDL_DestroyTexture(rect_shadow);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
 }
 
 void App::pace(double fps) {
@@ -160,28 +210,11 @@ void App::init_paths() {
 #endif
 }
 
-void App::build_shadow() {
-    SDL_Surface* raw = IMG_Load(cartridge_path.c_str());
-    if (!raw) return;
-    SDL_Surface* src = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
-    SDL_FreeSurface(raw);
-    if (!src) return;
-
-    const int radius = 20;
-    const int pad = 80;
-    int sw = src->w, sh = src->h;
-    int bw = sw + pad * 2, bh = sh + pad * 2;
-
-    std::vector<float> a(bw * bh, 0.0f), b(bw * bh, 0.0f);
-    for (int y = 0; y < sh; y++) {
-        const Uint8* row = (const Uint8*)src->pixels + y * src->pitch;
-        for (int x = 0; x < sw; x++)
-            a[(y + pad) * bw + (x + pad)] = row[x * 4 + 3] / 255.0f;
-    }
-    SDL_FreeSurface(src);
-
+static SDL_Texture* blur_to_texture(SDL_Renderer* renderer, std::vector<float>& a,
+                                    int bw, int bh, int radius) {
+    std::vector<float> b(bw * bh, 0.0f);
+    float inv = 1.0f / (2 * radius + 1);
     auto blur_h = [&](const std::vector<float>& in, std::vector<float>& out) {
-        float inv = 1.0f / (2 * radius + 1);
         for (int y = 0; y < bh; y++) {
             const float* r = &in[y * bw];
             float* o = &out[y * bw];
@@ -194,7 +227,6 @@ void App::build_shadow() {
         }
     };
     auto blur_v = [&](const std::vector<float>& in, std::vector<float>& out) {
-        float inv = 1.0f / (2 * radius + 1);
         for (int x = 0; x < bw; x++) {
             float sum = 0.0f;
             for (int i = -radius; i <= radius; i++) sum += in[std::clamp(i, 0, bh - 1) * bw + x];
@@ -211,7 +243,7 @@ void App::build_shadow() {
     }
 
     SDL_Surface* out = SDL_CreateRGBSurfaceWithFormat(0, bw, bh, 32, SDL_PIXELFORMAT_RGBA32);
-    if (!out) return;
+    if (!out) return nullptr;
     for (int y = 0; y < bh; y++) {
         Uint8* row = (Uint8*)out->pixels + y * out->pitch;
         for (int x = 0; x < bw; x++) {
@@ -222,14 +254,55 @@ void App::build_shadow() {
             row[x * 4 + 3] = (Uint8)(v * 255.0f);
         }
     }
-    cartridge_shadow = SDL_CreateTextureFromSurface(renderer, out);
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, out);
     SDL_FreeSurface(out);
-    if (cartridge_shadow) {
-        SDL_SetTextureBlendMode(cartridge_shadow, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(cartridge_shadow, SDL_ScaleModeLinear);
-        shadow_pad_x = (float)pad / (float)sw;
-        shadow_pad_y = (float)pad / (float)sh;
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
     }
+    return tex;
+}
+
+void App::build_shadow() {
+    SDL_Surface* raw = IMG_Load(cartridge_path.c_str());
+    if (raw) {
+        SDL_Surface* src = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+        SDL_FreeSurface(raw);
+        if (src) {
+            const int pad = 80;
+            int sw = src->w, sh = src->h;
+            int bw = sw + pad * 2, bh = sh + pad * 2;
+            std::vector<float> a(bw * bh, 0.0f);
+            for (int y = 0; y < sh; y++) {
+                const Uint8* row = (const Uint8*)src->pixels + y * src->pitch;
+                for (int x = 0; x < sw; x++)
+                    a[(y + pad) * bw + (x + pad)] = row[x * 4 + 3] / 255.0f;
+            }
+            SDL_FreeSurface(src);
+            cartridge_shadow = blur_to_texture(renderer, a, bw, bh, 20);
+            if (cartridge_shadow) {
+                shadow_pad_x = (float)pad / (float)sw;
+                shadow_pad_y = (float)pad / (float)sh;
+            }
+        }
+    }
+
+    const int core = 256, rpad = 72, corner = 12;
+    int rw = core + rpad * 2;
+    std::vector<float> m(rw * rw, 0.0f);
+    for (int y = 0; y < core; y++) {
+        for (int x = 0; x < core; x++) {
+            float dx = 0.0f, dy = 0.0f;
+            if (x < corner)             dx = (float)(corner - x);
+            else if (x >= core - corner) dx = (float)(x - (core - corner - 1));
+            if (y < corner)             dy = (float)(corner - y);
+            else if (y >= core - corner) dy = (float)(y - (core - corner - 1));
+            float d = std::sqrt(dx * dx + dy * dy);
+            m[(y + rpad) * rw + (x + rpad)] = (d > (float)corner) ? 0.0f : 1.0f;
+        }
+    }
+    rect_shadow = blur_to_texture(renderer, m, rw, rw, 18);
+    if (rect_shadow) rect_pad = (float)rpad / (float)core;
 }
 
 void App::load_settings() {
@@ -243,6 +316,23 @@ void App::load_settings() {
             int v; if (f >> v && v >= 0 && v <= 5) fps_index = v;
         } else if (key == "vsync") {
             int v; if (f >> v) vsync = (v != 0);
+        } else if (key == "hidpi") {
+            int v; if (f >> v) hidpi = (v != 0);
+        } else if (key == "cartridge") {
+            int v; if (f >> v) render_cartridge = (v != 0);
+        } else if (key == "window") {
+            int ww, wh;
+            if (f >> ww >> wh && ww >= 480 && wh >= 360 && ww <= 16384 && wh <= 16384) {
+                win_w = ww;
+                win_h = wh;
+            }
+        } else if (key == "windowpos") {
+            int wx, wy;
+            if (f >> wx >> wy) {
+                win_x = wx;
+                win_y = wy;
+                have_win_pos = true;
+            }
         } else if (key == "key") {
             int i; long long v;
             if (f >> i >> v && i >= 0 && i < 8) keybinds[i] = (SDL_Keycode)v;
@@ -259,34 +349,29 @@ void App::save_settings() {
     f << "scale " << (int)scale_mode << "\n";
     f << "fps " << fps_index << "\n";
     f << "vsync " << (vsync ? 1 : 0) << "\n";
+    f << "hidpi " << (hidpi ? 1 : 0) << "\n";
+    f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
+#if GB_DESKTOP
+    if (window) {
+        int ww = win_w, wh = win_h, wx = win_x, wy = win_y;
+        SDL_GetWindowSize(window, &ww, &wh);
+        SDL_GetWindowPosition(window, &wx, &wy);
+        f << "window " << ww << " " << wh << "\n";
+        f << "windowpos " << wx << " " << wy << "\n";
+    }
+#endif
     for (int i = 0; i < 8; i++)
         f << "key " << i << " " << (long long)keybinds[i] << "\n";
 }
 
 // destructor
 App::~App() {
-#if GB_DESKTOP
-    SDL_DelEventWatch(resize_watch, this);
-#endif
-    // imgui
-    ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    destroy_video();
     ImGui::DestroyContext();
-    // cover list cleanup
-    for (SDL_Texture* cover : cover_list)
-        if (cover)
-            SDL_DestroyTexture(cover);
 #if GB_DESKTOP
     // nfd
     NFD_Quit();
 #endif
-    // sdl
-    SDL_DestroyTexture(texture);
-    SDL_DestroyTexture(gameboy_sprite);
-    SDL_DestroyTexture(cartridge_sprite);
-    SDL_DestroyTexture(cartridge_shadow);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
     SDL_Quit();
 }
 
@@ -319,6 +404,14 @@ void App::run() {
         if (state != prev_state) {
             ImGui::GetIO().ClearInputKeys();
             prev_state = state;
+        }
+
+        if (video_reset) {
+            video_reset = false;
+            destroy_video();
+            create_video();
+            scan_roms();
+            ImGui::GetIO().ClearInputKeys();
         }
     }
 }
@@ -425,7 +518,9 @@ void App::render_game() {
     ImGui::End();
     ImGui::PopStyleVar();
     ImGui::Render();
+    SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
 
     SDL_RenderPresent(renderer);
     if (!in_live_resize) pace(kGbFps);
@@ -545,7 +640,11 @@ void App::draw_settings(float w, float h) {
         float body_h  = ws.y - body_y - pad * 2.0f - close_h;
 
         ImGui::SetCursorPos(ImVec2(pad, body_y));
-        ImGui::BeginChild("settings_body", ImVec2(inner_w, body_h), false);
+        ImGui::BeginChild("settings_body", ImVec2(inner_w, body_h), false,
+                          ImGuiWindowFlags_NoScrollWithMouse);
+        ImVec2 body_min = ImGui::GetWindowPos();
+        ImVec2 body_max = ImVec2(body_min.x + ImGui::GetWindowSize().x,
+                                 body_min.y + ImGui::GetWindowSize().y);
         float ctrl_gap = 18.0f;
         float ctrl_w = 132.0f;
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
@@ -582,6 +681,7 @@ void App::draw_settings(float w, float h) {
                     float bottom = cpos.y + chh + n * item_h;
                     ImDrawList* pdl = ImGui::GetWindowDrawList();
                     pdl->PushClipRectFullScreen();
+                    pdl->PushClipRect(body_min, body_max, true);
                     pdl->AddRectFilled(ImVec2(cpos.x - 1.0f, top),
                                        ImVec2(cpos.x + cw + 1.0f, bottom),
                                        IM_COL32(33, 38, 3, 255), 8.0f,
@@ -615,11 +715,13 @@ void App::draw_settings(float w, float h) {
                     }
                     ImGui::PopStyleVar();
                     pdl->PopClipRect();
+                    pdl->PopClipRect();
                     ImGui::EndCombo();
                 }
 
                 if (!covered) {
                     ImDrawList* fg = ImGui::GetForegroundDrawList();
+                    fg->PushClipRect(body_min, body_max, true);
                     fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh),
                                       hot_c ? IM_COL32(87, 102, 5, 255)
                                             : IM_COL32(61, 71, 5, 255), 8.0f);
@@ -627,6 +729,7 @@ void App::draw_settings(float w, float h) {
                     fg->AddText(ImVec2(cpos.x + cw - 12.0f - cts.x,
                                        cpos.y + (chh - cts.y) * 0.5f),
                                 IM_COL32(0xE6, 0xED, 0xC7, 255), items[cur]);
+                    fg->PopClipRect();
                 }
                 return picked;
             };
@@ -640,30 +743,46 @@ void App::draw_settings(float w, float h) {
                 save_settings();
             }
 
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("vsync");
-            ImGui::SameLine();
+            auto toggle_row = [&](const char* text, const char* id, bool on) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(text);
+                ImGui::SameLine();
 
-            float fh = ImGui::GetFrameHeight();
-            float th = fh * 0.70f;
-            float tw = th * 1.95f;
-            ImVec2 tp = ImGui::GetCursorScreenPos();
-            tp.x = right_edge - ctrl_gap - tw;
-            ImGui::SetCursorScreenPos(tp);
-            bool toggled = ImGui::InvisibleButton("##vsync", ImVec2(tw, fh));
-            bool hot_t = ImGui::IsItemHovered();
-            float ty = tp.y + (fh - th) * 0.5f;
-            ImDrawList* tdl = ImGui::GetWindowDrawList();
-            ImU32 track = vsync ? (hot_t ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255))
-                                : (hot_t ? IM_COL32(52, 60, 4, 255)  : IM_COL32(38, 44, 3, 255));
-            tdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
-            float kr = th * 0.5f - 3.0f;
-            float kx = vsync ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
-            tdl->AddCircleFilled(ImVec2(kx, ty + th * 0.5f), kr,
-                                 IM_COL32(255, 255, 255, 255), 24);
-            if (toggled) {
+                float fh = ImGui::GetFrameHeight();
+                float th = fh * 0.70f;
+                float tw = th * 1.95f;
+                ImVec2 tp = ImGui::GetCursorScreenPos();
+                tp.x = right_edge - ctrl_gap - tw;
+                ImGui::SetCursorScreenPos(tp);
+                bool hit = ImGui::InvisibleButton(id, ImVec2(tw, fh));
+                bool hot_t = ImGui::IsItemHovered();
+                float ty = tp.y + (fh - th) * 0.5f;
+                ImDrawList* tdl = ImGui::GetWindowDrawList();
+                ImU32 track = on ? (hot_t ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255))
+                                 : (hot_t ? IM_COL32(52, 60, 4, 255)  : IM_COL32(38, 44, 3, 255));
+                tdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
+                float kr = th * 0.5f - 3.0f;
+                float kx = on ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
+                tdl->AddCircleFilled(ImVec2(kx, ty + th * 0.5f), kr,
+                                     IM_COL32(255, 255, 255, 255), 24);
+                return hit;
+            };
+
+            if (toggle_row("vsync", "##vsync", vsync)) {
                 vsync = !vsync;
                 SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
+                save_settings();
+            }
+            if (toggle_row("render cartridge", "##cart", render_cartridge)) {
+                render_cartridge = !render_cartridge;
+                save_settings();
+            }
+            if (toggle_row("hidpi", "##hidpi", hidpi)) {
+                hidpi = !hidpi;
+                video_reset = true;
+                settings_open = false;
+                rebind_target = -1;
+                ImGui::CloseCurrentPopup();
                 save_settings();
             }
         } else {
@@ -693,6 +812,27 @@ void App::draw_settings(float w, float h) {
                 ImGui::PopStyleVar();
                 if (waiting) ImGui::PopStyleColor();
                 ImGui::PopID();
+            }
+        }
+        {
+            ImGuiIO& sio = ImGui::GetIO();
+            float cur     = ImGui::GetScrollY();
+            float view_h  = ImGui::GetWindowSize().y;
+            float content = ImGui::GetCursorPosY();
+            float maxs    = std::max(0.0f, content - view_h);
+            bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+            if (hovered && sio.MouseWheel != 0.0f) {
+                float base = (std::abs(settings_scroll - cur) > 0.5f) ? settings_scroll : cur;
+                settings_scroll = base - sio.MouseWheel * 60.0f;
+            }
+            settings_scroll = std::clamp(settings_scroll, 0.0f, maxs);
+            if (std::abs(settings_scroll - cur) > 0.5f) {
+                float next = cur + (settings_scroll - cur) * std::min(1.0f, sio.DeltaTime * 16.0f);
+                if (std::abs(settings_scroll - next) < 0.5f) next = settings_scroll;
+                ImGui::SetScrollY(next);
+            } else {
+                settings_scroll = cur;
             }
         }
         ImGui::EndChild();
@@ -743,6 +883,13 @@ void App::handle_events() {
 
         if (event.type == SDL_QUIT)
             std::exit(0);
+
+#if GB_DESKTOP
+        if (event.type == SDL_WINDOWEVENT &&
+            (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+             event.window.event == SDL_WINDOWEVENT_MOVED))
+            save_settings();
+#endif
 
 #if GB_IOS
         // stop rendering the moment ios tells us we are leaving the foreground, resume when back
@@ -1019,11 +1166,50 @@ void App::render_menu() {
         const float slot_x0 = 0.114f, slot_x1 = 0.882f;
         const float slot_y0 = 0.280f, slot_y1 = 0.896f;
         for (const Card& cd : cards) {
+            ImU32 tint = IM_COL32(255, 255, 255, 255);
+
+            if (!render_cartridge) {
+                float hs = cd.sz * 0.5f;
+                ImVec2 a0(org.x + cd.cx - hs, org.y + cover_cy - hs);
+                ImVec2 a1(a0.x + cd.sz, a0.y + cd.sz);
+                float round = cd.sz * 0.04f;
+                if (cover_list[cd.r]) {
+                    int tw = 1, th = 1;
+                    SDL_QueryTexture(cover_list[cd.r], nullptr, nullptr, &tw, &th);
+                    float src_ar = (float)tw / (float)th;
+                    float aw = cd.sz, ah = cd.sz;
+                    if (src_ar > 1.0f) ah = cd.sz / src_ar;
+                    else               aw = cd.sz * src_ar;
+                    a0 = ImVec2(org.x + cd.cx - aw * 0.5f, org.y + cover_cy - ah * 0.5f);
+                    a1 = ImVec2(a0.x + aw, a0.y + ah);
+                }
+                if (rect_shadow) {
+                    float px = (a1.x - a0.x) * rect_pad;
+                    float py = (a1.y - a0.y) * rect_pad;
+                    float drop = cd.sz * 0.035f;
+                    dl->AddImage((ImTextureID)rect_shadow,
+                                 ImVec2(a0.x - px, a0.y - py + drop),
+                                 ImVec2(a1.x + px, a1.y + py + drop),
+                                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
+                }
+                if (cover_list[cd.r]) {
+                    dl->AddImageRounded((ImTextureID)cover_list[cd.r], a0, a1,
+                                        ImVec2(0, 0), ImVec2(1, 1), tint, round);
+                } else {
+                    dl->AddRectFilled(a0, a1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
+                    std::string nm = display_name(rom_list[cd.r]);
+                    ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
+                    dl->AddText(ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
+                                       (a0.y + a1.y) * 0.5f - ts.y * 0.5f),
+                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
+                }
+                continue;
+            }
+
             float cart_h = cd.sz;
             float cart_w = cd.sz * cart_ar;
             ImVec2 p0(org.x + cd.cx - cart_w * 0.5f, org.y + cover_cy - cart_h * 0.5f);
             ImVec2 p1(p0.x + cart_w, p0.y + cart_h);
-            ImU32 tint = IM_COL32(255, 255, 255, 255);
 
             if (cartridge_shadow) {
                 float px = cart_w * shadow_pad_x;
@@ -1127,7 +1313,9 @@ void App::render_menu() {
     ImGui::Render();
     SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0f, 0xFF);
     SDL_RenderClear(renderer);
+    SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     SDL_RenderPresent(renderer);
     if (!in_live_resize) pace((double)kFpsCaps[fps_index]);
 }

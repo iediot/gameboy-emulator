@@ -30,14 +30,16 @@ class App
 {
 private:
     // private members
-    SDL_Window* window;
-    SDL_Renderer* renderer;
-    SDL_Texture* texture;
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
     SDL_Texture* gameboy_sprite;
     SDL_Texture* cartridge_sprite;
     SDL_Texture* cartridge_shadow;
+    SDL_Texture* rect_shadow;
     float shadow_pad_x = 0.0f;
     float shadow_pad_y = 0.0f;
+    float rect_pad = 0.0f;
     AppState state;
     std::unique_ptr<Memory> mem;
     std::unique_ptr<Cpu> cpu;
@@ -61,8 +63,17 @@ private:
     bool settings_open = false;
     int settings_tab = 0;
     int rebind_target = -1;
+    float settings_scroll = 0.0f;
     int fps_index = 1;
     bool vsync = true;
+    bool hidpi = false;
+    bool render_cartridge = true;
+    bool video_reset = false;
+    int win_w = 1280;
+    int win_h = 720;
+    int win_x = 0;
+    int win_y = 0;
+    bool have_win_pos = false;
     uint64_t last_present = 0;
     bool in_live_resize = false;
     SDL_Keycode keybinds[8];
@@ -74,6 +85,8 @@ private:
 
     // private methods
     void init_paths();
+    void create_video();
+    void destroy_video();
     void build_shadow();
     void load_settings();
     void save_settings();
