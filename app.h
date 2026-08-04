@@ -24,6 +24,10 @@
 
 enum class AppState { MENU, PLAYING };
 
+inline constexpr int         kFpsCaps[6]  = {30, 60, 120, 144, 240, 0};
+inline constexpr const char* kFpsNames[6] = {"30", "60", "120", "144", "240", "unlimited"};
+inline constexpr double      kGbFps       = 59.7275;
+
 enum class ScaleMode { NORMAL, CROP, STRETCH };
 
 class App
@@ -51,6 +55,9 @@ private:
     std::string artwork_folder;  // where cover art .png files live
     std::string sprite_path;     // the gameboy bezel sprite
     std::string cartridge_path;  // the cartridge shell the covers sit in
+    std::string icon_light_path; // window icon for a light system theme
+    std::string icon_dark_path;  // window icon for a dark system theme
+    bool bundled = false;        // running from a .app, the system owns the icon then
     std::string settings_path;   // where the scale mode, frame cap and keybinds are stored
 
     int carousel_index = 0;

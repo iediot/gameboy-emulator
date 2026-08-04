@@ -51,7 +51,7 @@ namespace {
     }
 
     // the back-to-menu button, in screen pixels up in the top letterbox
-    SDL_Rect back_button(int out_w, int out_h) {
+    SDL_Rect ios_back_rect(int out_w, int out_h) {
         return {(int)(out_w * 0.04f), (int)(out_h * 0.045f), (int)(out_w * 0.20f), (int)(out_h * 0.05f)};
     }
 
@@ -114,17 +114,37 @@ void App::render_game_ios() {
     }
 #endif
 
-    // back-to-menu control, only the chevron is drawn, the touch area itself stays invisible
-    SDL_Rect back = back_button(out_w, out_h);
-    SDL_SetRenderDrawColor(renderer, 0x8a, 0x99, 0x3f, 0xFF); // muted green from the sprite palette
-    int cx = back.x + back.w / 4, cy = back.y + back.h / 2, s = back.h / 3;
-    for (int t = -3; t <= 3; t++) { // stack offset lines so the strokes read as a bold arrow
-        SDL_RenderDrawLine(renderer, cx + s, cy - s + t, cx - s, cy + t);
-        SDL_RenderDrawLine(renderer, cx - s, cy + t, cx + s, cy + s + t);
+    // the round back button is drawn through imgui so it matches the desktop one
+    ImGui_ImplSDLRenderer2_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGuiIO& io = ImGui::GetIO();
+    int win_w, win_h;
+    SDL_GetWindowSize(window, &win_w, &win_h);
+    io.DisplaySize = ImVec2((float)out_w, (float)out_h);
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    io.FontGlobalScale = (win_w > 0) ? (float)out_w / win_w : 1.0f;
+    ImGui::NewFrame();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("##overlay", nullptr,
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    float br = std::max((float)out_w, (float)out_h) * 0.0245f;
+    if (back_button(br * 1.55f, br * 2.4f + out_h * 0.03f, br)) {
+        for (auto& held : touch_buttons) mem->set_button(held.second, false);
+        touch_buttons.clear();
+        state = AppState::MENU;
     }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::Render();
+    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
 
     SDL_RenderPresent(renderer);
-    SDL_Delay(8);
+    pace(kGbFps);
 }
 
 // swipe carousel, one big cover framed at a time with arrows, a title and a play button
@@ -257,30 +277,106 @@ void App::render_menu_ios() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 org = ImGui::GetWindowPos();
         int base = (int)std::floor(carousel_pos);
-        struct Card { int r; float rel, cx, sz; int a; };
+        struct Card { int r; float rel, cx, sz; };
         std::vector<Card> cards;
-        for (int k = base - 2; k <= base + 3; k++) {
+        int span = (int)std::ceil((w * 0.5f) / (cover * 0.30f)) + 2;
+        for (int k = base - span; k <= base + span + 1; k++) {
             float rel = k - carousel_pos;            // <0 previous (left), >0 next (right)
-            if (std::abs(rel) > 2.6f) continue;
-            int r = view[wrap(k)];
-            float ad = std::min(std::abs(rel), 3.0f);
-            float sz = cover * (1.0f - ad * 0.08f);
-            float cx = cover_cx + rel * (cover * 0.11f); // spread both ways, ~twice the old spacing
-            int a = (int)(255 * std::max(0.0f, std::min(1.0f, 1.0f - ad * 0.4f))); // opaque in front, see-through to the sides
-            cards.push_back({r, rel, cx, sz, a});
+            float ad = std::abs(rel);
+            float sz = cover * std::max(0.45f, 1.0f - ad * 0.08f);
+            float cx = cover_cx + rel * (cover * 0.30f);
+            if (cx + sz * 0.5f < 0.0f || cx - sz * 0.5f > w) continue;
+            cards.push_back({view[wrap(k)], rel, cx, sz});
         }
         // outermost first so the card sliding toward the centre rises on top while the old one slips under
         std::sort(cards.begin(), cards.end(), [](const Card& x, const Card& y) { return std::abs(x.rel) > std::abs(y.rel); });
+
+        const float cart_ar = 700.0f / 800.0f;
+        const float slot_x0 = 0.114f, slot_x1 = 0.882f;
+        const float slot_y0 = 0.280f, slot_y1 = 0.896f;
+        bool use_cart = render_cartridge && cartridge_sprite;
+        ImU32 tint = IM_COL32(255, 255, 255, 255);
         for (const Card& cd : cards) {
-            float hs = cd.sz * 0.5f;
-            ImVec2 p0(org.x + cd.cx - hs, org.y + cover_cy - hs), p1(org.x + cd.cx + hs, org.y + cover_cy + hs);
+            if (!use_cart) {
+                float hs = cd.sz * 0.5f;
+                ImVec2 a0(org.x + cd.cx - hs, org.y + cover_cy - hs);
+                ImVec2 a1(a0.x + cd.sz, a0.y + cd.sz);
+                float round = cd.sz * 0.04f;
+                if (cover_list[cd.r]) {
+                    int tw = 1, th = 1;
+                    SDL_QueryTexture(cover_list[cd.r], nullptr, nullptr, &tw, &th);
+                    float src_ar = (float)tw / (float)th;
+                    float aw = cd.sz, ah = cd.sz;
+                    if (src_ar > 1.0f) ah = cd.sz / src_ar;
+                    else               aw = cd.sz * src_ar;
+                    a0 = ImVec2(org.x + cd.cx - aw * 0.5f, org.y + cover_cy - ah * 0.5f);
+                    a1 = ImVec2(a0.x + aw, a0.y + ah);
+                }
+                if (rect_shadow) {
+                    float px = (a1.x - a0.x) * rect_pad;
+                    float py = (a1.y - a0.y) * rect_pad;
+                    float drop = cd.sz * 0.035f;
+                    dl->AddImage((ImTextureID)rect_shadow,
+                                 ImVec2(a0.x - px, a0.y - py + drop),
+                                 ImVec2(a1.x + px, a1.y + py + drop),
+                                 ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
+                }
+                if (cover_list[cd.r]) {
+                    dl->AddImageRounded((ImTextureID)cover_list[cd.r], a0, a1,
+                                        ImVec2(0, 0), ImVec2(1, 1), tint, round);
+                } else {
+                    dl->AddRectFilled(a0, a1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
+                    std::string nm = display_name(rom_list[cd.r]);
+                    ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
+                    dl->AddText(ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
+                                       (a0.y + a1.y) * 0.5f - ts.y * 0.5f),
+                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
+                }
+                continue;
+            }
+
+            float cart_h = cd.sz;
+            float cart_w = cd.sz * cart_ar;
+            ImVec2 p0(org.x + cd.cx - cart_w * 0.5f, org.y + cover_cy - cart_h * 0.5f);
+            ImVec2 p1(p0.x + cart_w, p0.y + cart_h);
+
+            if (cartridge_shadow) {
+                float px = cart_w * shadow_pad_x;
+                float py = cart_h * shadow_pad_y;
+                float drop = cart_h * 0.035f;
+                dl->AddImage((ImTextureID)cartridge_shadow,
+                             ImVec2(p0.x - px, p0.y - py + drop),
+                             ImVec2(p1.x + px, p1.y + py + drop),
+                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
+            }
+            dl->AddImage((ImTextureID)cartridge_sprite, p0, p1, ImVec2(0, 0), ImVec2(1, 1), tint);
+
+            ImVec2 s0(p0.x + cart_w * slot_x0, p0.y + cart_h * slot_y0);
+            ImVec2 s1(p0.x + cart_w * slot_x1, p0.y + cart_h * slot_y1);
+            float slot_w = s1.x - s0.x;
+            float slot_h = s1.y - s0.y;
+            float round  = slot_h * 0.06f;
             if (cover_list[cd.r]) {
-                dl->AddImage((ImTextureID)cover_list[cd.r], p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, cd.a));
+                int tw = 1, th = 1;
+                SDL_QueryTexture(cover_list[cd.r], nullptr, nullptr, &tw, &th);
+                float src_ar  = (float)tw / (float)th;
+                float slot_ar = slot_w / slot_h;
+                float art_w = slot_w, art_h = slot_h;
+                if (src_ar > slot_ar) art_h = slot_w / src_ar;
+                else                  art_w = slot_h * src_ar;
+                art_w *= 0.97f;
+                art_h *= 0.97f;
+                ImVec2 d0((s0.x + s1.x) * 0.5f - art_w * 0.5f, s0.y);
+                ImVec2 d1(d0.x + art_w, d0.y + art_h);
+                dl->AddImageRounded((ImTextureID)cover_list[cd.r], d0, d1,
+                                    ImVec2(0, 0), ImVec2(1, 1), tint, round);
             } else {
-                dl->AddRectFilled(p0, p1, IM_COL32(0x3d, 0x47, 0x03, cd.a), 10.0f);
+                dl->AddRectFilled(s0, s1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
                 std::string nm = display_name(rom_list[cd.r]);
                 ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                dl->AddText(ImVec2(org.x + cd.cx - ts.x * 0.5f, org.y + cover_cy - ts.y * 0.5f), IM_COL32(0xE6, 0xED, 0xC7, cd.a), nm.c_str());
+                dl->AddText(ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
+                                   (s0.y + s1.y) * 0.5f - ts.y * 0.5f),
+                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
             }
         }
 
@@ -344,6 +440,8 @@ void App::render_menu_ios() {
         ios_present_document_picker(rom_folder.c_str());
     }
 
+    draw_settings(w, h);
+
     ImGui::End();
     ImGui::PopStyleVar(3);
     ImGui::Render();
@@ -351,7 +449,7 @@ void App::render_menu_ios() {
     SDL_RenderClear(renderer);
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
     SDL_RenderPresent(renderer);
-    SDL_Delay(16); // cap the menu at ~60fps instead of spinning the cpu
+    pace((double)kFpsCaps[fps_index]);
 }
 
 // turns finger touches into joypad presses and drives the back button, supports several fingers at once
@@ -364,15 +462,11 @@ void App::handle_touch_ios(const SDL_Event& event) {
     float px = event.tfinger.x * out_w; // tfinger coords are normalised to the window
     float py = event.tfinger.y * out_h;
 
-    // tapping the back button releases every held key and returns to the carousel
-    SDL_Rect back = back_button(out_w, out_h);
-    if (event.type == SDL_FINGERDOWN &&
-        px >= back.x && px < back.x + back.w && py >= back.y && py < back.y + back.h) {
-        for (auto& held : touch_buttons) mem->set_button(held.second, false);
-        touch_buttons.clear();
-        state = AppState::MENU;
+    // the round back button up top is an imgui item now, keep fingers there out of the joypad
+    float br = std::max((float)out_w, (float)out_h) * 0.0245f;
+    float bcx = br * 1.55f, bcy = br * 2.4f + out_h * 0.03f;
+    if ((px - bcx) * (px - bcx) + (py - bcy) * (py - bcy) <= (br * 1.6f) * (br * 1.6f))
         return;
-    }
 
     // map the touch back into bezel space with the same cover transform the renderer uses
     float scale = cover_scale(out_w, out_h);

@@ -17,10 +17,6 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
-static const int   kFpsCaps[6]  = {30, 60, 120, 144, 240, 0};
-static const char* kFpsNames[6] = {"30", "60", "120", "144", "240", "unlimited"};
-static const double kGbFps = 59.7275;
-
 #if GB_DESKTOP
 static int SDLCALL resize_watch(void* data, SDL_Event* e) {
     if (e->type == SDL_WINDOWEVENT &&
@@ -64,6 +60,24 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
     scan_roms();
 }
 
+#if GB_DESKTOP && defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+static bool system_dark_theme() {
+    bool dark = false;
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("AppleInterfaceStyle"),
+                                                    kCFPreferencesAnyApplication);
+    if (v) {
+        if (CFGetTypeID(v) == CFStringGetTypeID())
+            dark = CFStringCompare((CFStringRef)v, CFSTR("Dark"),
+                                   kCFCompareCaseInsensitive) == kCFCompareEqualTo;
+        CFRelease(v);
+    }
+    return dark;
+}
+#else
+static bool system_dark_theme() { return true; }
+#endif
+
 static bool position_on_a_display(int x, int y, int w, int h) {
     SDL_Rect win = {x, y, w, h};
     for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
@@ -95,6 +109,13 @@ void App::create_video() {
         px, py, win_w, win_h, win_flags);
 #if GB_DESKTOP
     SDL_SetWindowMinimumSize(window, 480, 360);
+    if (!bundled) {
+        const std::string& icon_path = system_dark_theme() ? icon_dark_path : icon_light_path;
+        if (SDL_Surface* icon = IMG_Load(icon_path.c_str())) {
+            SDL_SetWindowIcon(window, icon);
+            SDL_FreeSurface(icon);
+        }
+    }
 #endif
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer)
@@ -199,14 +220,48 @@ void App::init_paths() {
                                            std::filesystem::copy_options::skip_existing, ec);
     }
 #else
-    sprite_path    = "../sprites/gameboy.png";
-    cartridge_path = "../sprites/cartridge.png";
-    artwork_folder = "../artworks/";
-    rom_folder     = "../roms/game-roms/";
-
     char* pref = SDL_GetPrefPath("com.iediot", "gbemu");
-    settings_path = std::string(pref ? pref : "") + "settings.txt";
+    std::string p = pref ? pref : "";
     if (pref) SDL_free(pref);
+    settings_path = p + "settings.txt";
+
+    // inside a .app the assets sit in Contents/Resources, a plain build off the
+    // source tree keeps the old relative paths so running from the ide still works
+    std::string res;
+    char* base = SDL_GetBasePath();
+    if (base) {
+        std::error_code ec;
+        std::string candidate = std::string(base) + "../Resources/";
+        if (std::filesystem::exists(candidate + "artworks", ec))
+            res = candidate;
+        SDL_free(base);
+    }
+
+    bundled = !res.empty();
+    if (bundled) {
+        sprite_path     = res + "gameboy.png";
+        cartridge_path  = res + "cartridge.png";
+        icon_light_path = res + "icon-mac-light.png";
+        icon_dark_path  = res + "icon-mac-dark.png";
+        artwork_folder  = res + "artworks/";
+        rom_folder      = p + "game-roms/";
+
+        std::error_code ec;
+        std::filesystem::create_directories(rom_folder, ec);
+        if (std::filesystem::is_empty(rom_folder, ec)) {
+            for (const auto& e : std::filesystem::directory_iterator(res + "game-roms/", ec))
+                if (e.path().extension() == ".gb")
+                    std::filesystem::copy_file(e.path(), rom_folder + e.path().filename().string(),
+                                               std::filesystem::copy_options::skip_existing, ec);
+        }
+    } else {
+        sprite_path     = "../sprites/gameboy.png";
+        cartridge_path  = "../sprites/cartridge.png";
+        icon_light_path = "../sprites/icon-mac-light.png";
+        icon_dark_path  = "../sprites/icon-mac-dark.png";
+        artwork_folder  = "../artworks/";
+        rom_folder      = "../roms/game-roms/";
+    }
 #endif
 }
 
@@ -403,6 +458,7 @@ void App::run() {
 
         if (state != prev_state) {
             ImGui::GetIO().ClearInputKeys();
+            ImGui::GetIO().ClearInputMouse();
             prev_state = state;
         }
 
@@ -582,22 +638,41 @@ bool App::back_button(float cx, float cy, float r) {
 }
 
 void App::draw_settings(float w, float h) {
+#if GB_IOS
+    const int tab_count = 1;
+    float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
+    float r = std::max(w, h) * 0.0245f;
+    float m = r * 0.55f;
+    float cog_y = r * 2.4f + h * 0.03f; // the ios menu already fills the bottom with add game
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * ui, 12.0f * ui));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * ui, 12.0f * ui));
+#else
+    const int tab_count = 2;
+    float ui = 1.0f;
     float r = std::max(14.0f, std::min(w, h) * 0.030f);
     float m = r * 1.4f;
-    if (cog_button(m + r, h - m - r, r)) {
+    float cog_y = h - m - r;
+#endif
+    if (cog_button(m + r, cog_y, r)) {
         settings_open = true;
+        settings_tab = (settings_tab < tab_count) ? settings_tab : 0;
         ImGui::OpenPopup("settings");
     }
     if (state == AppState::PLAYING && back_button(m + r, m + r, r))
         state = AppState::MENU;
 
     const char* tabs[2] = {"display", "keybinds"};
-    float pad = 22.0f, tab_h = 32.0f, tab_gap = 8.0f, close_h = 40.0f;
-    float tab_w = std::max(ImGui::CalcTextSize(tabs[0]).x, ImGui::CalcTextSize(tabs[1]).x) + 34.0f;
+    float pad = 22.0f * ui, tab_h = 32.0f * ui, tab_gap = 8.0f * ui, close_h = 40.0f * ui;
+    float tab_w = std::max(ImGui::CalcTextSize(tabs[0]).x, ImGui::CalcTextSize(tabs[1]).x) + 34.0f * ui;
 
     float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+#if GB_IOS
+    int rows = 2;
+    float pw = w * 0.86f;
+#else
     int rows = 5;
     float pw = std::min(w * 0.62f, 440.0f);
+#endif
     float ph = std::min(tab_h + pad * 3.0f + rows * row_h + close_h, h * 0.85f);
     ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
@@ -612,8 +687,8 @@ void App::draw_settings(float w, float h) {
         ImVec2 ws = ImGui::GetWindowSize();
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        for (int i = 0; i < 2; i++) {
-            float tx = wp.x + 26.0f + i * (tab_w + tab_gap);
+        for (int i = 0; i < tab_count; i++) {
+            float tx = wp.x + 26.0f * ui + i * (tab_w + tab_gap);
             ImGui::SetCursorScreenPos(ImVec2(tx, wp.y));
             ImGui::PushID(i);
             bool clicked = ImGui::InvisibleButton("##tab", ImVec2(tab_w, tab_h));
@@ -625,15 +700,15 @@ void App::draw_settings(float w, float h) {
             ImU32 col = on  ? IM_COL32(87, 102, 5, 255)
                       : hot ? IM_COL32(72, 84, 5, 255)
                             : IM_COL32(48, 56, 4, 255);
-            dl->AddRectFilled(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h + 26.0f),
-                              col, 12.0f, ImDrawFlags_RoundCornersTop);
+            dl->AddRectFilled(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h + 26.0f * ui),
+                              col, 12.0f * ui, ImDrawFlags_RoundCornersTop);
             ImVec2 ts = ImGui::CalcTextSize(tabs[i]);
             dl->AddText(ImVec2(tx + (tab_w - ts.x) * 0.5f, wp.y + (tab_h - ts.y) * 0.5f),
                         IM_COL32(0xE6, 0xED, 0xC7, 255), tabs[i]);
         }
 
         dl->AddRectFilled(ImVec2(wp.x, wp.y + tab_h), ImVec2(wp.x + ws.x, wp.y + ws.y),
-                          ImGui::GetColorU32(ImGuiCol_WindowBg), 22.0f);
+                          ImGui::GetColorU32(ImGuiCol_WindowBg), 22.0f * ui);
 
         float inner_w = ws.x - pad * 2.0f;
         float body_y  = tab_h + pad;
@@ -645,8 +720,8 @@ void App::draw_settings(float w, float h) {
         ImVec2 body_min = ImGui::GetWindowPos();
         ImVec2 body_max = ImVec2(body_min.x + ImGui::GetWindowSize().x,
                                  body_min.y + ImGui::GetWindowSize().y);
-        float ctrl_gap = 18.0f;
-        float ctrl_w = 132.0f;
+        float ctrl_gap = 18.0f * ui;
+        float ctrl_w = 132.0f * ui;
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         if (settings_tab == 0) {
             bool any_open = false;
@@ -734,11 +809,16 @@ void App::draw_settings(float w, float h) {
                 return picked;
             };
 
+#if GB_DESKTOP
             const char* modes[3] = {"normal", "crop", "stretch"};
             int fit = combo_row("screen fit", "##fit", modes, 3, (int)scale_mode);
-            int fps = combo_row("menu frame cap", "##fps", kFpsNames, 6, fps_index);
-            if (fit != (int)scale_mode || fps != fps_index) {
+            if (fit != (int)scale_mode) {
                 scale_mode = (ScaleMode)fit;
+                save_settings();
+            }
+#endif
+            int fps = combo_row("menu frame cap", "##fps", kFpsNames, 6, fps_index);
+            if (fps != fps_index) {
                 fps_index = fps;
                 save_settings();
             }
@@ -768,15 +848,18 @@ void App::draw_settings(float w, float h) {
                 return hit;
             };
 
+#if GB_DESKTOP
             if (toggle_row("vsync", "##vsync", vsync)) {
                 vsync = !vsync;
                 SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
                 save_settings();
             }
+#endif
             if (toggle_row("render cartridge", "##cart", render_cartridge)) {
                 render_cartridge = !render_cartridge;
                 save_settings();
             }
+#if GB_DESKTOP
             if (toggle_row("hidpi", "##hidpi", hidpi)) {
                 hidpi = !hidpi;
                 video_reset = true;
@@ -785,6 +868,7 @@ void App::draw_settings(float w, float h) {
                 ImGui::CloseCurrentPopup();
                 save_settings();
             }
+#endif
         } else {
             const char* names[8] = {"right", "left", "up", "down", "a", "b", "select", "start"};
             const int order[8] = {2, 3, 1, 0, 4, 5, 6, 7};
@@ -849,6 +933,9 @@ void App::draw_settings(float w, float h) {
         rebind_target = -1;
     }
     ImGui::PopStyleVar(2);
+#if GB_IOS
+    ImGui::PopStyleVar(2);
+#endif
 }
 
 void App::handle_events() {
@@ -1168,7 +1255,7 @@ void App::render_menu() {
         for (const Card& cd : cards) {
             ImU32 tint = IM_COL32(255, 255, 255, 255);
 
-            if (!render_cartridge) {
+            if (!render_cartridge || !cartridge_sprite) {
                 float hs = cd.sz * 0.5f;
                 ImVec2 a0(org.x + cd.cx - hs, org.y + cover_cy - hs);
                 ImVec2 a1(a0.x + cd.sz, a0.y + cd.sz);

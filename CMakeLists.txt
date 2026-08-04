@@ -33,6 +33,7 @@ set(GB_SOURCES main.cpp
 if(GB_IOS)
     # roms, covers and the bezel are staged into the app bundle, read back at runtime via SDL_GetBasePath
     set(GB_RESOURCES ${CMAKE_SOURCE_DIR}/sprites/emu-sprite.png
+            ${CMAKE_SOURCE_DIR}/sprites/cartridge.png
             ${CMAKE_SOURCE_DIR}/artworks
             ${CMAKE_SOURCE_DIR}/roms/game-roms)
 
@@ -79,7 +80,23 @@ if(GB_IOS)
         endif()
     endif()
 else()
-    add_executable(gameboy_emu ${GB_SOURCES})
+    if(APPLE)
+        # a real .app so the dock shows a proper icon instead of a raw image, and so the
+        # thing is double clickable, assets ride along in Contents/Resources
+        set(GB_MAC_ASSETS ${CMAKE_SOURCE_DIR}/mac/AppIcon.icns
+                ${CMAKE_SOURCE_DIR}/sprites/cartridge.png
+                ${CMAKE_SOURCE_DIR}/sprites/icon-mac-light.png
+                ${CMAKE_SOURCE_DIR}/sprites/icon-mac-dark.png
+                ${CMAKE_SOURCE_DIR}/artworks
+                ${CMAKE_SOURCE_DIR}/roms/game-roms)
+        add_executable(gameboy_emu MACOSX_BUNDLE ${GB_SOURCES} ${GB_MAC_ASSETS})
+        set_source_files_properties(${GB_MAC_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(gameboy_emu PROPERTIES
+                MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/mac/Info.plist
+                OUTPUT_NAME "GBEmulator")
+    else()
+        add_executable(gameboy_emu ${GB_SOURCES})
+    endif()
 
     find_package(SDL2 REQUIRED)
     find_package(SDL2_image REQUIRED)
@@ -88,6 +105,11 @@ else()
     # native file dialog backs the 'add game' button, desktop only
     add_subdirectory(external/nativefiledialog-extended)
     target_link_libraries(gameboy_emu PRIVATE nfd)
+
+    # corefoundation reads the macos light/dark setting to pick the window icon
+    if(APPLE)
+        target_link_libraries(gameboy_emu PRIVATE "-framework CoreFoundation")
+    endif()
 endif()
 
 target_include_directories(gameboy_emu PRIVATE external/imgui external/imgui/backends)
