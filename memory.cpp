@@ -206,22 +206,17 @@ void Memory::write(uint16_t address, uint8_t value) {
 
     // DMA
     if (address == 0xFF46) {
-        fprintf(stderr, "DMASTART before src=%04X\n", dma_source);
         data[address] = value;
         dma_source = value << 8;
         dma_index  = 0;
         dma_tick   = 0;
         dma_delay  = 2;
         dma_active = true;
-        fprintf(stderr, "DMASTART after src=%04X\n", dma_source);
         return;
     }
 
-    if (address >= 0xFE00 && address <= 0xFE9F) {
-        fprintf(stderr, "OAMW %04X=%02X dma=%d idx=%d\n",
-                address, value, dma_active, dma_index);
-        if (dma_active) return;
-    }
+    if (address >= 0xFE00 && address <= 0xFE9F && dma_active)
+        return;
 
     uint8_t mode = data[0xFF41] & 0x03;
     bool lcd_on  = data[0xFF40] & 0x80;
@@ -273,6 +268,7 @@ void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
     data[0xFF07] = 0xF8; // TAC
     data[0xFF0F] = 0xE1; // IF
     data[0xFF40] = 0x91; // LCDC
+    
     data[0xFF41] = 0x85; // STAT
     data[0xFF46] = 0xFF; // DMA
     data[0xFF47] = 0xFC; // BGP

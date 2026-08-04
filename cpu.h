@@ -40,14 +40,6 @@ public:
     uint8_t ime_pending = 0;
     bool halted = false;
 
-    //debug to del after
-    bool trace_enabled = false;
-    static constexpr int TRACE_N = 1024;
-    char trace_ring[TRACE_N][176] = {};
-    int  trace_pos = 0;
-    bool trace_full = false;
-    void dump_trace();
-
     uint64_t total_cycles = 0;
 
     // Timer

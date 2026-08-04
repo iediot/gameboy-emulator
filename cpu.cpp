@@ -392,21 +392,7 @@ uint8_t Cpu::read_and_tick(uint16_t address) {
 
 void Cpu::write_and_tick(uint16_t address, uint8_t value) {
     tick(4);
-    if (address >= 0xDA10 && address <= 0xDA12)
-        fprintf(stderr, "WATCH %04X = %02X  PC:%04X SP:%04X\n",
-                address, value, PC, SP);
     mem.write(address, value);
-}
-
-// debug helper to del after
-void Cpu::dump_trace() {
-    int n     = trace_full ? TRACE_N : trace_pos;
-    int start = trace_full ? trace_pos : 0;
-    for (int i = 0; i < n; i++)
-        fprintf(stderr, "%s\n", trace_ring[(start + i) % TRACE_N]);
-    fprintf(stderr, "--- stack around SP:%04X ---\n", SP);
-    for (int i = -8; i < 8; i++)
-        fprintf(stderr, "  %04X: %02X\n", (uint16_t)(SP + i), mem.read(SP + i));
 }
 
 uint8_t Cpu::step() {
@@ -450,22 +436,6 @@ uint8_t Cpu::step() {
 
     uint8_t opcode = read_and_tick(PC);
     PC++;
-
-    //debug to del after
-    if (trace_enabled) {
-        uint16_t bank = (mem.mbc_type == MbcType::MBC1)
-                      ? ((mem.upper_bank << 5) | (mem.rom_bank & 0x1F))
-                      : mem.rom_bank;
-        snprintf(trace_ring[trace_pos], sizeof(trace_ring[0]),
-            "A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X "
-            "SP:%04X PC:%04X BANK:%02X DIV:%04X TIMA:%02X TAC:%02X "
-            "IF:%02X IE:%02X IME:%d op:%02X",
-            A, F, B, C, D, E, H, L, SP, (uint16_t)(PC - 1), bank,
-            internal_div, mem.read(0xFF05), mem.read(0xFF07),
-            mem.read(0xFF0F), mem.read(0xFFFF), IME, opcode);
-        trace_pos = (trace_pos + 1) % TRACE_N;
-        if (trace_pos == 0) trace_full = true;
-    }
 
     switch (opcode)
     {
@@ -2967,7 +2937,6 @@ uint8_t Cpu::step() {
                 }
 
             default: {
-                    dump_trace();
                     std::cerr << "Unknown CB opcode 0x" << std::hex
                     << static_cast<int>(cb_opcode) << " at PC = 0x" << PC - 2 << "\n";
                     std::exit(1);
@@ -3300,7 +3269,6 @@ uint8_t Cpu::step() {
         }
 
     default:
-        dump_trace();
         std::cerr << "Unknown opcode 0x" << std::hex
         << static_cast<int>(opcode) << " at PC = 0x" << PC - 1 << "\n";
         std::exit(1);

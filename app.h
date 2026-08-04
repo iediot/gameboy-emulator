@@ -24,6 +24,8 @@
 
 enum class AppState { MENU, PLAYING };
 
+enum class ScaleMode { NORMAL, CROP, STRETCH };
+
 class App
 {
 private:
@@ -32,7 +34,6 @@ private:
     SDL_Renderer* renderer;
     SDL_Texture* texture;
     SDL_Texture* gameboy_sprite;
-    SDL_Rect screen_area;
     AppState state;
     std::unique_ptr<Memory> mem;
     std::unique_ptr<Cpu> cpu;
@@ -40,25 +41,38 @@ private:
     std::vector<std::string> rom_list;
     std::vector<SDL_Texture*> cover_list;
     int selected_rom;
-    int carousel_index = 0;      // currently framed cover on the ios menu
     std::string rom_folder;      // where .gb files are read from
     std::string artwork_folder;  // where cover art .png files live
     std::string sprite_path;     // the gameboy bezel sprite
+    std::string settings_path;   // where the scale mode, frame cap and keybinds are stored
+
+    int carousel_index = 0;
+    float carousel_pos = 0.0f;
+    float carousel_drag_start = 0.0f;
+    float carousel_target = 0.0f;
+    float carousel_vel = 0.0f;
+    bool show_debug = false;
+    ScaleMode scale_mode = ScaleMode::NORMAL;
+    bool settings_open = false;
+    int settings_tab = 0;
+    int rebind_target = -1;
+    int fps_index = 1;
+    uint64_t last_present = 0;
+    bool in_live_resize = false;
+    SDL_Keycode keybinds[8];
 #if GB_IOS
     std::map<SDL_FingerID, int> touch_buttons; // live fingers to the joypad bit each one holds
     bool active = true;             // false while backgrounded, we must not touch the gpu then
-    float carousel_pos = 0.0f;      // continuous scroll position, whole numbers land on a game
-    float carousel_drag_start = 0.0f; // carousel_pos captured when a swipe begins
-    bool show_debug = false;        // false shows games with art, true shows the debug/test roms
-    float carousel_target = 0.0f;   // index the stack is easing towards after a fling
-    float carousel_vel = 0.0f;      // swipe speed in cards/sec, sampled to drive the fling
     std::vector<std::string> import_prev; // rom_list snapshot taken when the add-game picker opens
 #endif
 
     // private methods
     void init_paths();
+    void load_settings();
+    void save_settings();
     void scan_roms();
     void load_rom(const std::string& name);
+    void add_game();
     void render_game();
     void handle_events();
     void setup_style();
@@ -66,6 +80,10 @@ private:
     std::string closest_artwork(const std::string& rom_name);
     std::string display_name(const std::string& s);
     void render_menu();
+    void pace(double fps);
+    bool cog_button(float cx, float cy, float r);
+    bool back_button(float cx, float cy, float r);
+    void draw_settings(float w, float h);
 #if GB_IOS
     // ios-only layout and touch input, implemented in ios_ui.cpp
     void render_menu_ios();
@@ -79,6 +97,7 @@ public:
     ~App();
     // run method
     void run();
+    void live_resize();
 };
 
 #endif //GAMEBOY_EMU_APP_H
