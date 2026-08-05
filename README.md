@@ -7,8 +7,8 @@
 **A Game Boy emulator written from scratch in C++**
 
 ![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-sqircle&logo=cplusplus&logoColor=white)
-![macOS](https://img.shields.io/badge/macOS-000000?style=flat-sqircle&logo=apple&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-sqircle&logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-000000?style=flat-sqircle&logo=apple&logoColor=white)
 ![iOS](https://img.shields.io/badge/iOS-000000?style=flat-sqircle&logo=ios&logoColor=white)
 
 </div>
