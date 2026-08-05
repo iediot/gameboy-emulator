@@ -327,10 +327,14 @@ void App::render_menu_ios() {
                 } else {
                     dl->AddRectFilled(a0, a1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
                     std::string nm = display_name(rom_list[cd.r]);
-                    ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                    dl->AddText(ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
+                    ImFont* fnt = ImGui::GetFont();
+                    float   fsz = ImGui::GetFontSize();
+                    float   wrap = (a1.x - a0.x) * 0.88f;
+                    ImVec2  ts = fnt->CalcTextSizeA(fsz, FLT_MAX, wrap, nm.c_str());
+                    dl->AddText(fnt, fsz,
+                                ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
                                        (a0.y + a1.y) * 0.5f - ts.y * 0.5f),
-                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
+                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
                 }
                 continue;
             }
@@ -373,10 +377,14 @@ void App::render_menu_ios() {
             } else {
                 dl->AddRectFilled(s0, s1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
                 std::string nm = display_name(rom_list[cd.r]);
-                ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                dl->AddText(ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
+                ImFont* fnt = ImGui::GetFont();
+                float   fsz = ImGui::GetFontSize();
+                float   wrap = slot_w * 0.88f;
+                ImVec2  ts = fnt->CalcTextSizeA(fsz, FLT_MAX, wrap, nm.c_str());
+                dl->AddText(fnt, fsz,
+                            ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
                                    (s0.y + s1.y) * 0.5f - ts.y * 0.5f),
-                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
+                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
             }
         }
 

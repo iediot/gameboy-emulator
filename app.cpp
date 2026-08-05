@@ -141,6 +141,9 @@ void App::create_video() {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 #if GB_DESKTOP
+    SDL_StopTextInput();
+#endif
+#if GB_DESKTOP
     SDL_AddEventWatch(resize_watch, this);
 #endif
 }
@@ -1131,9 +1134,15 @@ std::string App::display_name(const std::string& s) {
     while (!out.empty() && out.back() == ' ')
         out.pop_back();
 
-    // cap length adding ... when truncated
-    if (out.size() > 21)
-        out = out.substr(0, 21) + "...";
+    static const std::string articles[] = {", The", ", An", ", A"};
+    for (const std::string& art : articles) {
+        size_t at = out.find(art);
+        if (at == std::string::npos) continue;
+        size_t end = at + art.size();
+        if (end != out.size() && out.compare(end, 3, " - ") != 0) continue;
+        out = art.substr(2) + " " + out.substr(0, at) + out.substr(end);
+        break;
+    }
 
     return out;
 }
@@ -1285,10 +1294,14 @@ void App::render_menu() {
                 } else {
                     dl->AddRectFilled(a0, a1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
                     std::string nm = display_name(rom_list[cd.r]);
-                    ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                    dl->AddText(ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
+                    ImFont* fnt = ImGui::GetFont();
+                    float   fsz = ImGui::GetFontSize();
+                    float   wrap = (a1.x - a0.x) * 0.88f;
+                    ImVec2  ts = fnt->CalcTextSizeA(fsz, FLT_MAX, wrap, nm.c_str());
+                    dl->AddText(fnt, fsz,
+                                ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
                                        (a0.y + a1.y) * 0.5f - ts.y * 0.5f),
-                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
+                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
                 }
                 continue;
             }
@@ -1333,10 +1346,14 @@ void App::render_menu() {
             } else {
                 dl->AddRectFilled(s0, s1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
                 std::string nm = display_name(rom_list[cd.r]);
-                ImVec2 ts = ImGui::CalcTextSize(nm.c_str());
-                dl->AddText(ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
+                ImFont* fnt = ImGui::GetFont();
+                float   fsz = ImGui::GetFontSize();
+                float   wrap = slot_w * 0.88f;
+                ImVec2  ts = fnt->CalcTextSizeA(fsz, FLT_MAX, wrap, nm.c_str());
+                dl->AddText(fnt, fsz,
+                            ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
                                    (s0.y + s1.y) * 0.5f - ts.y * 0.5f),
-                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str());
+                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
             }
         }
 
