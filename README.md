@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="sprites/icon-mac-light.png" width="128" alt="gameboy-emu icon">
+<img src="sprites/icon-mac-light.png" width="256" alt="gameboy-emu icon">
 
 # gameboy-emu
 
