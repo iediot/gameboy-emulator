@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>GBEmulator</string>
+    <string>gameboy-emu</string>
     <key>CFBundleIdentifier</key>
     <string>com.iediot.gbemu</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>GBEmulator</string>
+    <string>gameboy-emu</string>
     <key>CFBundleDisplayName</key>
-    <string>GBEmulator</string>
+    <string>gameboy-emu</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -92,8 +92,7 @@ else()
         add_executable(gameboy_emu MACOSX_BUNDLE ${GB_SOURCES} ${GB_MAC_ASSETS})
         set_source_files_properties(${GB_MAC_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         set_target_properties(gameboy_emu PROPERTIES
-                MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/mac/Info.plist
-                OUTPUT_NAME "GBEmulator")
+                MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/mac/Info.plist)
     else()
         add_executable(gameboy_emu ${GB_SOURCES})
     endif()
@@ -111,5 +110,7 @@ else()
         target_link_libraries(gameboy_emu PRIVATE "-framework CoreFoundation")
     endif()
 endif()
+
+set_target_properties(gameboy_emu PROPERTIES OUTPUT_NAME "gameboy-emu")
 
 target_include_directories(gameboy_emu PRIVATE external/imgui external/imgui/backends)

@@ -105,7 +105,7 @@ void App::create_video() {
         py = win_y;
     }
 #endif
-    window = SDL_CreateWindow("GBEmulator", // window title
+    window = SDL_CreateWindow("gameboy-emu", // window title
         px, py, win_w, win_h, win_flags);
 #if GB_DESKTOP
     SDL_SetWindowMinimumSize(window, 480, 360);
