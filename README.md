@@ -10,6 +10,7 @@
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-sqircle&logo=linux&logoColor=black)
 ![macOS](https://img.shields.io/badge/macOS-000000?style=flat-sqircle&logo=apple&logoColor=white)
 ![iOS](https://img.shields.io/badge/iOS-000000?style=flat-sqircle&logo=ios&logoColor=white)
+![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-sqircle&logo=android&logoColor=white)
 
 </div>
 
@@ -23,7 +24,7 @@ No frameworks, no borrowed cores — the CPU, PPU, timer, interrupt controller a
 mappers are all implemented here from the hardware documentation. On top of that sits a
 hand-drawn Dear ImGui frontend: a cover-art carousel that mounts each game's box art into a
 Game Boy cartridge shell, live settings, rebindable keys, and the whole thing compiles
-unchanged for iOS.
+unchanged for iOS and Android.
 
 ## Emulation
 
@@ -57,8 +58,8 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 - **Rebindable keys** — every button remappable from the UI.
 - **Persistence** — settings, keybinds, window size and window position are restored on launch.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
-- **Add games** — native file picker on desktop, the system document picker on iOS.
-- **Native packaging** — a real macOS `.app` bundle with light/dark app icons, and an iOS app with touch controls.
+- **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android.
+- **Native packaging** — a real macOS `.app` bundle with light/dark app icons, plus iOS and Android apps that share one touch layout, each with its own native icon.
 
 ## Build
 
@@ -80,8 +81,8 @@ cmake -B build
 cmake --build build
 ```
 
-On macOS this produces `build/GBEmulator.app` — double-click it, or drop it in
-`/Applications`. On Linux it produces `build/gameboy_emu`.
+On macOS this produces `build/gameboy-emu.app` — double-click it, or drop it in
+`/Applications`. On Linux it produces `build/gameboy-emu`.
 
 ### iOS
 
@@ -97,6 +98,21 @@ open build-ios/gameboy_emu.xcodeproj
 Then pick your device and hit run. Omit `-DGB_DEV_TEAM` to choose the signing team inside
 Xcode, or target the simulator, which needs no signing at all.
 
+### Android
+
+Gradle drives CMake and pulls the NDK, CMake and SDK platform down on the first build,
+so nothing has to be installed by hand.
+
+```bash
+cd android
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Or open the `android/` folder in Android Studio and hit Run. `minSdk` is 21, both
+`arm64-v8a` and `x86_64` are built, and the covers and ROMs are packed into the APK,
+which makes it a large one.
+
 ## Controls
 
 Defaults — all rebindable in **Settings → Keybinds**.
@@ -110,7 +126,8 @@ Defaults — all rebindable in **Settings → Keybinds**.
 | Select | `Backspace` |
 | Back to menu | `Esc` |
 
-On iOS the d-pad and buttons are drawn as touch zones over the screen.
+On iOS and Android the d-pad and buttons are drawn as touch zones over the Game Boy
+bezel, tracked per finger so combinations work.
 
 ## Where things live
 
@@ -125,6 +142,9 @@ copied there:
 
 Cover art is matched to a ROM by fuzzy name comparison against `artworks/`, so
 `Super Mario Land 2 - 6 Golden Coins (USA, Europe) (Rev 2).gb` still finds its box art.
+
+On iOS the same layout sits inside the app container. On Android the covers stay
+read-only inside the APK and the ROMs are seeded into internal storage on first launch.
 
 ## Roadmap
 
