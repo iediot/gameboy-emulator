@@ -14,7 +14,7 @@
 #include "cpu.h"
 #include "ppu.h"
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
 #include <SDL.h>
 #include <SDL_image.h>
 #else
@@ -84,7 +84,7 @@ private:
     uint64_t last_present = 0;
     bool in_live_resize = false;
     SDL_Keycode keybinds[8];
-#if GB_IOS
+#if GB_MOBILE
     std::map<SDL_FingerID, int> touch_buttons; // live fingers to the joypad bit each one holds
     bool active = true;             // false while backgrounded, we must not touch the gpu then
     std::vector<std::string> import_prev; // rom_list snapshot taken when the add-game picker opens
@@ -105,13 +105,18 @@ private:
     void setup_style();
     std::string normalize(std::string s);
     std::string closest_artwork(const std::string& rom_name);
+    std::vector<std::string> artwork_files();
+#if GB_MOBILE
+    std::vector<std::string> bundled_roms();
+    void copy_bundled_rom(const std::string& name);
+#endif
     std::string display_name(const std::string& s);
     void render_menu();
     void pace(double fps);
     bool cog_button(float cx, float cy, float r);
     bool back_button(float cx, float cy, float r);
     void draw_settings(float w, float h);
-#if GB_IOS
+#if GB_MOBILE
     // ios-only layout and touch input, implemented in ios_ui.cpp
     void render_menu_ios();
     void render_game_ios();

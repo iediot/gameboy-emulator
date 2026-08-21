@@ -32,7 +32,7 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
     // sdl
     SDL_Init(SDL_INIT_VIDEO);
     init_paths();
-#if GB_IOS
+#if GB_MOBILE
     win_w = 600;
     win_h = 1000;
 #endif
@@ -91,8 +91,13 @@ static bool position_on_a_display(int x, int y, int w, int h) {
 
 void App::create_video() {
     Uint32 win_flags = SDL_WINDOW_SHOWN;
-#if GB_IOS
+#if GB_MOBILE
     win_flags |= SDL_WINDOW_ALLOW_HIGHDPI; // back the renderer at native pixels, not an upscaled buffer
+#endif
+#if GB_ANDROID
+    // sdlactivity only switches on sticky immersive while the sdl window is fullscreen,
+    // without this the status and navigation bars stay on top of the game
+    win_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
 #if GB_DESKTOP
     win_flags |= SDL_WINDOW_RESIZABLE;
@@ -126,7 +131,7 @@ void App::create_video() {
         SDL_TEXTUREACCESS_STREAMING, 160, 144);
     SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest); // keep the gameboy pixels sharp when scaled up
     gameboy_sprite = nullptr;
-#if GB_IOS
+#if GB_MOBILE
     gameboy_sprite = IMG_LoadTexture(renderer, sprite_path.c_str());
 #endif
     cartridge_sprite = IMG_LoadTexture(renderer, cartridge_path.c_str());
@@ -200,28 +205,34 @@ void App::live_resize() {
 
 // resolve rom, cover and sprite paths per platform, ios reads them from the app bundle
 void App::init_paths() {
-#if GB_IOS
-    char* base = SDL_GetBasePath();
+#if GB_MOBILE
     char* pref = SDL_GetPrefPath("com.iediot", "gbemu");
-    std::string b = base ? base : "";
     std::string p = pref ? pref : "";
-    if (base) SDL_free(base);
     if (pref) SDL_free(pref);
+    rom_folder    = p + "game-roms/"; // writable copy so roms can be added and deleted
+    settings_path = p + "settings.txt";
+
+#if GB_ANDROID
+    // assets live inside the apk, sdl_rwops resolves these relative paths through
+    // the asset manager, so there is no base path to prefix them with
+    sprite_path    = "emu-sprite.png";
+    cartridge_path = "cartridge.png";
+    artwork_folder = "artworks/";
+#else
+    char* base = SDL_GetBasePath();
+    std::string b = base ? base : "";
+    if (base) SDL_free(base);
     sprite_path    = b + "emu-sprite.png"; // full-res ios bezel, the old gameboy.png stays unused
     cartridge_path = b + "cartridge.png";
     artwork_folder = b + "artworks/";      // read-only, shipped in the bundle
-    rom_folder     = p + "game-roms/";     // writable copy so roms can be added and deleted
-    settings_path  = p + "settings.txt";
+#endif
 
-    // on first launch seed the writable folder with the roms shipped in the bundle
+    // on first launch seed the writable folder with the roms shipped in the app
     std::error_code ec;
     std::filesystem::create_directories(rom_folder, ec);
-    if (std::filesystem::is_empty(rom_folder, ec)) {
-        for (const auto& e : std::filesystem::directory_iterator(b + "game-roms/", ec))
-            if (e.path().extension() == ".gb")
-                std::filesystem::copy_file(e.path(), rom_folder + e.path().filename().string(),
-                                           std::filesystem::copy_options::skip_existing, ec);
-    }
+    if (std::filesystem::is_empty(rom_folder, ec))
+        for (const std::string& name : bundled_roms())
+            copy_bundled_rom(name);
 #else
     char* pref = SDL_GetPrefPath("com.iediot", "gbemu");
     std::string p = pref ? pref : "";
@@ -439,7 +450,7 @@ void App::run() {
     while (true) {
         handle_events();
 
-#if GB_IOS
+#if GB_MOBILE
         // ios forbids gpu work in the background, so pause the whole loop until we return
         if (!active) {
             SDL_Delay(150);
@@ -518,7 +529,7 @@ void App::load_rom(const std::string& name) {
 
 // the renderer of the games inside the actual emulator
 void App::render_game() {
-#if GB_IOS
+#if GB_MOBILE
     render_game_ios(); // letterboxed layout lives in ios_ui.cpp
     return;
 #endif
@@ -641,7 +652,7 @@ bool App::back_button(float cx, float cy, float r) {
 }
 
 void App::draw_settings(float w, float h) {
-#if GB_IOS
+#if GB_MOBILE
     const int tab_count = 1;
     float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
     float r = std::max(w, h) * 0.0245f;
@@ -669,7 +680,7 @@ void App::draw_settings(float w, float h) {
     float tab_w = std::max(ImGui::CalcTextSize(tabs[0]).x, ImGui::CalcTextSize(tabs[1]).x) + 34.0f * ui;
 
     float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
-#if GB_IOS
+#if GB_MOBILE
     int rows = 2;
     float pw = w * 0.86f;
 #else
@@ -936,13 +947,13 @@ void App::draw_settings(float w, float h) {
         rebind_target = -1;
     }
     ImGui::PopStyleVar(2);
-#if GB_IOS
+#if GB_MOBILE
     ImGui::PopStyleVar(2);
 #endif
 }
 
 void App::handle_events() {
-#if GB_IOS
+#if GB_MOBILE
     // the ios menu is laid out in device pixels, so point-based touch events are scaled up to match
     float ui_scale = 1.0f;
     {
@@ -959,7 +970,7 @@ void App::handle_events() {
                             event.type == SDL_MOUSEBUTTONUP ||
                             event.type == SDL_MOUSEWHEEL);
         if (state == AppState::MENU || settings_open || mouse_event) {
-#if GB_IOS
+#if GB_MOBILE
             if (event.type == SDL_MOUSEMOTION) {
                 event.motion.x = (int)(event.motion.x * ui_scale);
                 event.motion.y = (int)(event.motion.y * ui_scale);
@@ -981,12 +992,30 @@ void App::handle_events() {
             save_settings();
 #endif
 
-#if GB_IOS
-        // stop rendering the moment ios tells us we are leaving the foreground, resume when back
+#if GB_MOBILE
+        // stop rendering the moment the os tells us we are leaving the foreground, resume when back
         if (event.type == SDL_APP_WILLENTERBACKGROUND || event.type == SDL_APP_DIDENTERBACKGROUND)
             active = false;
         if (event.type == SDL_APP_DIDENTERFOREGROUND)
             active = true;
+#endif
+
+#if GB_ANDROID
+        // android can drop the gl context while backgrounded, which invalidates every
+        // texture we hold, so rebuild the whole video stack when it comes back
+        if (event.type == SDL_RENDER_DEVICE_RESET || event.type == SDL_RENDER_TARGETS_RESET)
+            video_reset = true;
+
+        // the system back gesture would otherwise quit the app outright
+        if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_AC_BACK) {
+            if (settings_open) {
+                settings_open = false;
+                rebind_target = -1;
+            } else if (state == AppState::PLAYING) {
+                state = AppState::MENU;
+            }
+            continue;
+        }
 #endif
 
         if (rebind_target >= 0 && event.type == SDL_KEYDOWN) {
@@ -1017,7 +1046,7 @@ void App::handle_events() {
             continue;
         }
 
-#if GB_IOS
+#if GB_MOBILE
         // on ios the joypad and the back button are on-screen touch zones
         if (state == AppState::PLAYING)
             handle_touch_ios(event);
@@ -1086,19 +1115,97 @@ std::string App::normalize(std::string s) {
 }
 
 // finds the closest match to the normalized rom name
+#if GB_ANDROID
+// apk assets are not files on disk, sdl_rwops routes relative paths to the asset manager
+static std::string read_asset(const std::string& name) {
+    SDL_RWops* rw = SDL_RWFromFile(name.c_str(), "rb");
+    if (!rw) return {};
+    Sint64 sz = SDL_RWsize(rw);
+    std::string out;
+    if (sz > 0) {
+        out.resize((size_t)sz);
+        SDL_RWread(rw, out.data(), 1, (size_t)sz);
+    }
+    SDL_RWclose(rw);
+    return out;
+}
+
+// assets cannot be enumerated, so the build writes a file listing them instead
+static std::vector<std::string> asset_manifest(const char* name) {
+    std::vector<std::string> out;
+    std::string text = read_asset(name);
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(start, end - start);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        if (!line.empty()) out.push_back(line);
+        start = end + 1;
+    }
+    return out;
+}
+#endif
+
+#if GB_MOBILE
+std::vector<std::string> App::bundled_roms() {
+#if GB_ANDROID
+    return asset_manifest("game-roms.txt");
+#else
+    std::vector<std::string> out;
+    std::error_code ec;
+    char* base = SDL_GetBasePath();
+    std::string b = base ? base : "";
+    if (base) SDL_free(base);
+    for (const auto& e : std::filesystem::directory_iterator(b + "game-roms/", ec))
+        if (e.path().extension() == ".gb")
+            out.push_back(e.path().filename().string());
+    return out;
+#endif
+}
+
+void App::copy_bundled_rom(const std::string& name) {
+#if GB_ANDROID
+    std::string data = read_asset("game-roms/" + name);
+    if (data.empty()) return;
+    std::ofstream out(rom_folder + name, std::ios::binary | std::ios::trunc);
+    out.write(data.data(), (std::streamsize)data.size());
+#else
+    char* base = SDL_GetBasePath();
+    std::string b = base ? base : "";
+    if (base) SDL_free(base);
+    std::error_code ec;
+    std::filesystem::copy_file(b + "game-roms/" + name, rom_folder + name,
+                               std::filesystem::copy_options::skip_existing, ec);
+#endif
+}
+#endif
+
+std::vector<std::string> App::artwork_files() {
+#if GB_ANDROID
+    return asset_manifest("artworks.txt");
+#else
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(artwork_folder, ec))
+        if (e.path().extension() == ".png")
+            out.push_back(e.path().filename().string());
+    return out;
+#endif
+}
+
 std::string App::closest_artwork(const std::string& rom_name) {
     std::string target = normalize(rom_name);
-    std::string best_path;
+    std::string best_name;
     size_t best_score = std::string::npos;
 
-    for (const auto& entry : std::filesystem::directory_iterator(artwork_folder)) {
-        if (entry.path().extension() != ".png") continue;
-
-        std::string cand = normalize(entry.path().stem().string());
+    for (const std::string& file : artwork_files()) {
+        std::string cand = normalize(file.substr(0, file.size() - 4));
         if (cand.empty()) continue;
 
         if (cand == target)
-            return entry.path().string();           // exact, done
+            return artwork_folder + file;           // exact, done
 
         // accept only if one contains the other; score by length difference
         if (cand.find(target) != std::string::npos ||
@@ -1108,11 +1215,11 @@ std::string App::closest_artwork(const std::string& rom_name) {
                          : target.size() - cand.size();
             if (score < best_score) {
                 best_score = score;
-                best_path = entry.path().string();
+                best_name = file;
             }
-            }
+        }
     }
-    return best_path;   // empty string if nothing matched
+    return best_name.empty() ? std::string() : artwork_folder + best_name;
 }
 
 // turns the file name into a formatted displayable name for the menu ui
@@ -1148,7 +1255,7 @@ std::string App::display_name(const std::string& s) {
 }
 
 void App::render_menu() {
-#if GB_IOS
+#if GB_MOBILE
     render_menu_ios();
     return;
 #endif

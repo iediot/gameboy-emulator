@@ -50,7 +50,7 @@ static UIViewController* gb_top_vc() {
     return vc;
 }
 
-extern "C" void ios_present_document_picker(const char* destDir) {
+extern "C" void gb_present_document_picker(const char* destDir) {
     NSString* dest = [NSString stringWithUTF8String:destDir];
     dispatch_async(dispatch_get_main_queue(), ^{
         g_picker_delegate = [GBDocPicker new];
@@ -66,7 +66,7 @@ extern "C" void ios_present_document_picker(const char* destDir) {
 }
 
 // true exactly once after an import finishes, so the caller can rescan the folder
-extern "C" bool ios_take_import_done() {
+extern "C" bool gb_take_import_done() {
     if (g_import_done) { g_import_done = false; return true; }
     return false;
 }

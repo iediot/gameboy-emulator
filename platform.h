@@ -13,14 +13,25 @@
     #endif
 #endif
 
-// GB_IOS for iphone/ipad, GB_DESKTOP for mac/linux/windows, use these not raw __APPLE__
+#if defined(__ANDROID__)
+    #define GB_ANDROID 1
+#endif
+
+// GB_IOS for iphone/ipad, GB_ANDROID for android, GB_MOBILE for the touch ui the two
+// of them share, GB_DESKTOP for mac/linux/windows, use these not raw __APPLE__
 #ifndef GB_IOS
     #define GB_IOS 0
 #endif
 
-#if GB_IOS
+#ifndef GB_ANDROID
+    #define GB_ANDROID 0
+#endif
+
+#if GB_IOS || GB_ANDROID
+    #define GB_MOBILE  1
     #define GB_DESKTOP 0
 #else
+    #define GB_MOBILE  0
     #define GB_DESKTOP 1
 #endif
 

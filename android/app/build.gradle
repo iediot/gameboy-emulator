@@ -1,0 +1,92 @@
+apply plugin: 'com.android.application'
+
+def repoRoot = file('../..')
+def stagedAssets = layout.buildDirectory.dir('generated/gbassets').get().asFile
+
+android {
+    namespace 'com.iediot.gbemu'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.iediot.gbemu"
+        minSdk 21
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_static"
+                abiFilters 'arm64-v8a', 'x86_64'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path new File(repoRoot, 'CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            // sdl's activity glue is consumed straight out of the submodule
+            java.srcDirs += [new File(repoRoot, 'external/SDL/android-project/app/src/main/java')]
+            assets.srcDirs = [file('src/main/assets'), stagedAssets]
+        }
+    }
+
+    androidResources {
+        // stored uncompressed so sdl can use the fast file descriptor asset path
+        noCompress 'gb', 'png'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// covers, roms and sprites are staged into one folder that becomes the apk asset tree
+def stageGbAssets = tasks.register('stageGbAssets', Copy) {
+    into stagedAssets
+    from(new File(repoRoot, 'sprites')) {
+        include 'emu-sprite.png', 'cartridge.png'
+    }
+    from(new File(repoRoot, 'artworks')) {
+        into 'artworks'
+        include '*.png'
+    }
+    from(new File(repoRoot, 'roms/game-roms')) {
+        into 'game-roms'
+        include '*.gb'
+    }
+}
+
+// apk assets cannot be listed at runtime, so the names are written out here instead
+def writeGbManifests = tasks.register('writeGbManifests') {
+    dependsOn stageGbAssets
+    doLast {
+        def listing = { File dir, String ext ->
+            def files = dir.listFiles()
+            if (files == null) return ""
+            files.findAll { it.name.endsWith(ext) }.collect { it.name }.sort().join('\n') + '\n'
+        }
+        new File(stagedAssets, 'artworks.txt').text  = listing(new File(stagedAssets, 'artworks'), '.png')
+        new File(stagedAssets, 'game-roms.txt').text = listing(new File(stagedAssets, 'game-roms'), '.gb')
+    }
+}
+
+tasks.configureEach { t ->
+    if (t.name.startsWith('merge') && t.name.endsWith('Assets')) {
+        t.dependsOn writeGbManifests
+    }
+}

@@ -6,9 +6,12 @@ project(gameboy_emu CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 
-# ios is selected with -DCMAKE_SYSTEM_NAME=iOS, everything else is desktop
+# ios is selected with -DCMAKE_SYSTEM_NAME=iOS, android comes from the ndk toolchain
+# gradle passes in, everything else is desktop
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(GB_IOS TRUE)
+elseif(ANDROID)
+    set(GB_ANDROID TRUE)
 endif()
 
 # emulator core plus imgui, shared by every platform
@@ -28,9 +31,36 @@ set(GB_SOURCES main.cpp
         external/imgui/backends/imgui_impl_sdlrenderer2.cpp
         app.cpp
         app.h
-        ios_ui.cpp)
+        ios_ui.cpp
+        android_import.cpp)
 
-if(GB_IOS)
+if(GB_ANDROID)
+    # android 15 devices can use 16k memory pages, every .so in the apk has to be aligned
+    # to match or the installer rejects the app, this has to precede every target below
+    add_link_options("-Wl,-z,max-page-size=16384")
+
+    # sdlactivity dlopens libSDL2.so then libmain.so, so the app has to be a shared lib
+    # with an entry point named SDL_main, not an executable
+    add_library(gameboy_emu SHARED ${GB_SOURCES})
+    set_target_properties(gameboy_emu PROPERTIES OUTPUT_NAME "main")
+
+    # sdl ships shared on android because the java side loads it by name, GBActivity
+    # lists SDL2 and SDL2_image ahead of main so they are in memory first
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    add_subdirectory(external/SDL)
+
+    # stb backend decodes png with no external libpng dependency, sdl_image stays shared
+    # here because a static build makes it look for a system sdl2 instead of the in tree one
+    set(SDL2IMAGE_VENDORED OFF CACHE BOOL "" FORCE)
+    set(SDL2IMAGE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(SDL2IMAGE_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL2IMAGE_DEPS_SHARED OFF CACHE BOOL "" FORCE)
+    add_subdirectory(external/SDL_image)
+
+    target_link_libraries(gameboy_emu PRIVATE SDL2::SDL2 SDL2::SDL2main
+                          SDL2_image::SDL2_image GLESv2 log android)
+elseif(GB_IOS)
     # roms, covers and the bezel are staged into the app bundle, read back at runtime via SDL_GetBasePath
     set(GB_RESOURCES ${CMAKE_SOURCE_DIR}/sprites/emu-sprite.png
             ${CMAKE_SOURCE_DIR}/sprites/cartridge.png
@@ -111,6 +141,9 @@ else()
     endif()
 endif()
 
-set_target_properties(gameboy_emu PROPERTIES OUTPUT_NAME "gameboy-emu")
+# android is the exception, sdlactivity looks for a library literally named main
+if(NOT GB_ANDROID)
+    set_target_properties(gameboy_emu PROPERTIES OUTPUT_NAME "gameboy-emu")
+endif()
 
 target_include_directories(gameboy_emu PRIVATE external/imgui external/imgui/backends)

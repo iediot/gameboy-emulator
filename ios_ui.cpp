@@ -1,10 +1,10 @@
 //
 // Created by edi on 7/20/26.
 //
-// ios-only screen layout, the whole file compiles to nothing on desktop
+// touch screen layout shared by ios and android, compiles to nothing on desktop
 
 #include "platform.h"
-#if GB_IOS
+#if GB_MOBILE
 
 #include <algorithm>
 #include <cmath>
@@ -15,9 +15,9 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
-// implemented in ios_import.mm
-extern "C" void ios_present_document_picker(const char* dest_dir);
-extern "C" bool ios_take_import_done();
+// implemented in ios_import.mm on ios, android_import.cpp on android
+extern "C" void gb_present_document_picker(const char* dest_dir);
+extern "C" bool gb_take_import_done();
 
 #define GB_TOUCH_DEBUG 0 // set to 1 to tint the touch zones for alignment checks
 
@@ -58,6 +58,21 @@ namespace {
     // scale the sprite to cover the whole screen with a little overscan so its green edges bleed
     // off and no letterbox seam shows, render and touch must use this same transform to stay aligned
     constexpr float kOverscan = 1.04f;
+    // ios reports the window in points and the renderer in pixels, so the ratio between
+    // them is the ui scale, android reports both in pixels and carries it in the density
+    float ui_scale(int out_w, int win_w) {
+#if GB_ANDROID
+        (void)out_w;
+        (void)win_w;
+        float ddpi = 160.0f;
+        if (SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr) != 0 || ddpi <= 0.0f)
+            ddpi = 160.0f;
+        return std::max(1.0f, ddpi / 160.0f);
+#else
+        return (win_w > 0) ? (float)out_w / win_w : 1.0f;
+#endif
+    }
+
     float cover_scale(int out_w, int out_h) {
         return std::max(out_w / kDesignW, out_h / kDesignH) * kOverscan;
     }
@@ -122,7 +137,7 @@ void App::render_game_ios() {
     SDL_GetWindowSize(window, &win_w, &win_h);
     io.DisplaySize = ImVec2((float)out_w, (float)out_h);
     io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-    io.FontGlobalScale = (win_w > 0) ? (float)out_w / win_w : 1.0f;
+    io.FontGlobalScale = ui_scale(out_w, win_w);
     ImGui::NewFrame();
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -150,7 +165,7 @@ void App::render_game_ios() {
 // swipe carousel, one big cover framed at a time with arrows, a title and a play button
 void App::render_menu_ios() {
     // a finished import drops a new rom into the folder, pick it up before drawing
-    if (ios_take_import_done()) {
+    if (gb_take_import_done()) {
         scan_roms();
         int r_new = -1;
         for (int i = 0; i < (int)rom_list.size(); i++)
@@ -186,7 +201,7 @@ void App::render_menu_ios() {
     SDL_GetWindowSize(window, &win_w, &win_h);
     io.DisplaySize = ImVec2((float)out_w, (float)out_h);
     io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-    io.FontGlobalScale = (win_w > 0) ? (float)out_w / win_w : 1.0f;
+    io.FontGlobalScale = ui_scale(out_w, win_w);
 
     ImGui::NewFrame();
     float w = io.DisplaySize.x;
@@ -445,7 +460,7 @@ void App::render_menu_ios() {
     ImGui::SetCursorPos(ImVec2((w - add_w) * 0.5f, h * 0.86f));
     if (ImGui::Button("add game", ImVec2(add_w, h * 0.06f))) {
         import_prev = rom_list;                         // snapshot so the new rom can be spotted afterwards
-        ios_present_document_picker(rom_folder.c_str());
+        gb_present_document_picker(rom_folder.c_str());
     }
 
     draw_settings(w, h);
@@ -500,4 +515,4 @@ void App::handle_touch_ios(const SDL_Event& event) {
     }
 }
 
-#endif // GB_IOS
+#endif // GB_MOBILE

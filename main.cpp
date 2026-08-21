@@ -1,6 +1,6 @@
 #include "platform.h"
 // on ios sdl renames main to SDL_main and provides its own uikit entry point
-#if GB_IOS
+#if GB_MOBILE
 #include <SDL.h>
 #endif
 #include "app.h"
