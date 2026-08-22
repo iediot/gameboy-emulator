@@ -31,8 +31,20 @@ static int SDLCALL resize_watch(void* data, SDL_Event* e) {
 // constructor
 App::App() : state(AppState::MENU), selected_rom(-1) {
     // sdl
-    SDL_Init(SDL_INIT_VIDEO);
+    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+    SDL_AudioSpec want{}, have{};
+    want.freq     = 48000;
+    want.format   = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples  = 1024;
+    want.callback = nullptr;
+
+    audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+    if (audio_device)
+        SDL_PauseAudioDevice(audio_device, 0);
+
     init_paths();
+
 #if GB_MOBILE
     win_w = 600;
     win_h = 1000;
@@ -52,11 +64,11 @@ App::App() : state(AppState::MENU), selected_rom(-1) {
     ImGui::StyleColorsDark();
     setup_style();
     create_video();
+
 #if GB_DESKTOP
     // nfd
     NFD_Init();
 #endif
-
     last_present = SDL_GetPerformanceCounter();
     scan_roms();
 }
@@ -172,6 +184,7 @@ void App::destroy_video() {
     SDL_DestroyTexture(cartridge_sprite);
     SDL_DestroyTexture(cartridge_shadow);
     SDL_DestroyTexture(rect_shadow);
+    SDL_CloseAudioDevice(audio_device);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 }
@@ -466,6 +479,11 @@ void App::run() {
                 cpu->step();
             }
             ppu->frame_ready = false;
+            if (!apu->samples.empty()) {
+                SDL_QueueAudio(audio_device, apu->samples.data(),
+                               (Uint32)(apu->samples.size() * sizeof(int16_t)));
+                apu->samples.clear();
+            }
             render_game();
         } else {
             render_menu();
@@ -514,7 +532,9 @@ void App::load_rom(const std::string& name) {
     // rebuild the emulator
     mem = std::make_unique<Memory>();
     ppu = std::make_unique<Ppu>(*mem);
-    cpu = std::make_unique<Cpu>(*mem, *ppu);
+    apu = std::make_unique<Apu>();
+    cpu = std::make_unique<Cpu>(*mem, *ppu, *apu);
+    mem->apu = apu.get();
 
     std::ifstream rom_file(rom_folder + name, std::ios::binary);
     if (!rom_file) {

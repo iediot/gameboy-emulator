@@ -8,13 +8,15 @@
 #include <cstdint>
 #include "memory.h"
 #include "ppu.h"
+#include "apu.h"
 
 class Cpu {
 private:
     Memory& mem;
+    Apu& apu;
 public:
     // Constructor
-    Cpu(Memory& memory, Ppu& ppu);
+    Cpu(Memory& memory, Ppu& ppu, Apu& apu);
     Ppu& ppu;
 
     // Registers

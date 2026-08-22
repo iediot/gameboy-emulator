@@ -5,6 +5,7 @@
 #include <iostream>
 #include <cstdio>
 #include "memory.h"
+#include "apu.h"
 
 void Memory::write_mbc1(uint16_t address, uint8_t value) {
     if (address >= 0x0000 && address <= 0x1FFF) {
@@ -82,6 +83,11 @@ void Memory::step_dma() {
 }
 
 uint8_t Memory::read(uint16_t address) {
+    if (apu != nullptr && ((address >= 0xFF10 && address <= 0xFF26)
+            || (address >= 0xFF30 && address <= 0xFF3F))) {
+                return apu->read(address);
+            }
+
     if (address >= 0xE000 && address <= 0xFDFF)
         address -= 0x2000;
 
@@ -161,6 +167,12 @@ uint8_t Memory::read(uint16_t address) {
 }
 
 void Memory::write(uint16_t address, uint8_t value) {
+    if (apu != nullptr && ((address >= 0xFF10 && address <= 0xFF26)
+            || (address >= 0xFF30 && address <= 0xFF3F))) {
+                apu->write(address, value);
+                return;
+            }
+
     if (address >= 0xE000 && address <= 0xFDFF)
         address -= 0x2000;
 

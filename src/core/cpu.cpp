@@ -5,7 +5,7 @@
 #include <iostream>
 #include "cpu.h"
 
-Cpu::Cpu(Memory& memory, Ppu& ppu_ref) : mem(memory), ppu(ppu_ref) {
+Cpu::Cpu(Memory& memory, Ppu& ppu_ref, Apu& apu) : mem(memory), ppu(ppu_ref), apu(apu) {
     A = 0x01;
     F = 0xB0;
     B = 0x00;
@@ -379,6 +379,7 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         }
         last_and_result = and_result;
         ppu.step(1);
+        apu.step(1);
         mem.step_dma();
         cycles--;
         total_cycles++;

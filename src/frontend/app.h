@@ -13,6 +13,7 @@
 #include "core/memory.h"
 #include "core/cpu.h"
 #include "core/ppu.h"
+#include "core/apu.h"
 
 #if defined(__APPLE__) || defined(__ANDROID__)
 #include <SDL.h>
@@ -37,6 +38,7 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     SDL_Texture* texture = nullptr;
+    SDL_AudioDeviceID audio_device;
     SDL_Texture* gameboy_sprite;
     SDL_Texture* cartridge_sprite;
     SDL_Texture* cartridge_shadow;
@@ -48,6 +50,7 @@ private:
     std::unique_ptr<Memory> mem;
     std::unique_ptr<Cpu> cpu;
     std::unique_ptr<Ppu> ppu;
+    std::unique_ptr<Apu> apu;
     std::vector<std::string> rom_list;
     std::vector<SDL_Texture*> cover_list;
     int selected_rom;
@@ -76,6 +79,7 @@ private:
     bool hidpi = false;
     bool render_cartridge = true;
     bool video_reset = false;
+    int tone_phase = 0;
     int win_w = 1280;
     int win_h = 720;
     int win_x = 0;
