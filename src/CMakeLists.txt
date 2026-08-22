@@ -12,6 +12,7 @@ set(GB_SOURCES
         core/apu.h
         frontend/app.cpp
         frontend/app.h
+        frontend/glass.h
         frontend/mobile_ui.cpp
         platform/android_import.cpp)
 

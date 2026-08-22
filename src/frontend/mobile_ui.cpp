@@ -11,6 +11,7 @@
 #include <string>
 #include <filesystem>
 #include "app.h"
+#include "glass.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -30,10 +31,10 @@ namespace {
     constexpr ImU32 kPad    = IM_COL32(0x3C, 0x41, 0x30, 0xFF);
     constexpr ImU32 kPadOn  = IM_COL32(0x6B, 0x73, 0x58, 0xFF);
     constexpr ImU32 kPivot  = IM_COL32(0x2A, 0x2E, 0x22, 0xFF);
-    constexpr ImU32 kFace   = IM_COL32(0x4F, 0x6E, 0x12, 0xFF);
-    constexpr ImU32 kFaceOn = IM_COL32(0x7B, 0xA0, 0x22, 0xFF);
-    constexpr ImU32 kPill   = IM_COL32(0x4A, 0x4F, 0x3E, 0xFF);
-    constexpr ImU32 kPillOn = IM_COL32(0x77, 0x7F, 0x64, 0xFF);
+    constexpr ImU32 kFace   = IM_COL32(0x4F, 0x6E, 0x12, glass::kFill);
+    constexpr ImU32 kFaceOn = IM_COL32(0x7B, 0xA0, 0x22, glass::kFill);
+    constexpr ImU32 kPill   = IM_COL32(0x4A, 0x4F, 0x3E, glass::kFill);
+    constexpr ImU32 kPillOn = IM_COL32(0x77, 0x7F, 0x64, glass::kFill);
     constexpr ImU32 kLabel  = IM_COL32(0xD8, 0xDC, 0xC6, 0xFF);
 
     // every control is placed off the output size, render and hit testing both read this
@@ -110,8 +111,9 @@ namespace {
         bool hot = ImGui::IsItemHovered();
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddCircleFilled(ImVec2(cx, cy), r,
-                            hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255), 40);
+        ImU32 bg = glass::fill(hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255));
+        dl->AddCircleFilled(ImVec2(cx, cy), r, bg, 40);
+        glass::circle(dl, ImVec2(cx, cy), r);
         ImFont* font = ImGui::GetFont();
         float   size = r * 1.05f;
         ImVec2  ts   = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
@@ -127,6 +129,8 @@ namespace {
     }
 
     void draw_controls(ImDrawList* dl, const Layout& l, const bool* held) {
+        // the cross stays opaque and unclipped, the glass treatment reads badly on a plus
+        // and any attempt to tile it leaves seams where the arms meet
         float cx = l.pad.x, cy = l.pad.y, r = l.pad_arm, t = l.pad_half, rd = t * 0.45f;
         dl->AddRectFilled(ImVec2(cx - t, cy - r), ImVec2(cx + t, cy + r), kPad, rd);
         dl->AddRectFilled(ImVec2(cx - r, cy - t), ImVec2(cx + r, cy + t), kPad, rd);
@@ -138,20 +142,27 @@ namespace {
             dl->AddRectFilled(ImVec2(cx - r, cy - t), ImVec2(cx, cy + t), kPadOn, rd, ImDrawFlags_RoundCornersLeft);
         if (held[BIT_RIGHT])
             dl->AddRectFilled(ImVec2(cx, cy - t), ImVec2(cx + r, cy + t), kPadOn, rd, ImDrawFlags_RoundCornersRight);
+        glass::cross(dl, l.pad, r, t, rd);
         dl->AddCircleFilled(l.pad, t * 0.5f, kPivot, 28);
 
-        dl->AddCircleFilled(l.b, l.face_r, held[BIT_B] ? kFaceOn : kFace, 40);
-        dl->AddCircleFilled(l.a, l.face_r, held[BIT_A] ? kFaceOn : kFace, 40);
+        ImU32 b_col = held[BIT_B] ? kFaceOn : kFace;
+        ImU32 a_col = held[BIT_A] ? kFaceOn : kFace;
+        dl->AddCircleFilled(l.b, l.face_r, b_col, 40);
+        glass::circle(dl, l.b, l.face_r);
+        dl->AddCircleFilled(l.a, l.face_r, a_col, 40);
+        glass::circle(dl, l.a, l.face_r);
         centred_label(dl, l.b, l.face_r * 0.85f, "B");
         centred_label(dl, l.a, l.face_r * 0.85f, "A");
 
         ImVec2 ph = l.pill_half;
-        dl->AddRectFilled(ImVec2(l.select.x - ph.x, l.select.y - ph.y),
-                          ImVec2(l.select.x + ph.x, l.select.y + ph.y),
-                          held[BIT_SELECT] ? kPillOn : kPill, ph.y);
-        dl->AddRectFilled(ImVec2(l.start.x - ph.x, l.start.y - ph.y),
-                          ImVec2(l.start.x + ph.x, l.start.y + ph.y),
-                          held[BIT_START] ? kPillOn : kPill, ph.y);
+        ImU32 sel_col = held[BIT_SELECT] ? kPillOn : kPill;
+        ImU32 st_col  = held[BIT_START]  ? kPillOn : kPill;
+        ImVec2 sel0(l.select.x - ph.x, l.select.y - ph.y), sel1(l.select.x + ph.x, l.select.y + ph.y);
+        ImVec2 st0(l.start.x - ph.x, l.start.y - ph.y),    st1(l.start.x + ph.x, l.start.y + ph.y);
+        dl->AddRectFilled(sel0, sel1, sel_col, ph.y);
+        glass::rect(dl, sel0, sel1, ph.y);
+        dl->AddRectFilled(st0, st1, st_col, ph.y);
+        glass::rect(dl, st0, st1, ph.y);
         centred_label(dl, l.select, ph.y * 0.95f, "SELECT");
         centred_label(dl, l.start,  ph.y * 0.95f, "START");
     }
@@ -507,13 +518,13 @@ void App::render_menu_ios() {
         float row_x = (w - (play_w + gap + del_w)) * 0.5f;
         float row_y = title_y + h * 0.05f;
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
-        if (ImGui::Button("play", ImVec2(play_w, btn_h)))
+        if (glass::button("play", ImVec2(play_w, btn_h)))
             load_rom(rom_list[r_centre]);
         ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.10f, 0.05f, 1.0f));
-        if (ImGui::Button("delete", ImVec2(del_w, btn_h)))
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 0.50f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.10f, 0.05f, 0.50f));
+        if (glass::button("delete", ImVec2(del_w, btn_h)))
             ImGui::OpenPopup("confirm_delete");
         ImGui::PopStyleColor(3);
 
@@ -525,8 +536,8 @@ void App::render_menu_ios() {
                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove)) {
             ImGui::TextUnformatted(("delete " + display_name(rom_list[r_centre]) + " ?").c_str());
             ImGui::Dummy(ImVec2(0, h * 0.02f));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
-            if (ImGui::Button("delete", ImVec2(w * 0.32f, h * 0.07f))) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+            if (glass::button("delete", ImVec2(w * 0.32f, h * 0.07f))) {
                 std::error_code ec;
                 std::filesystem::remove(rom_folder + rom_list[r_centre], ec);
                 scan_roms();
@@ -536,7 +547,7 @@ void App::render_menu_ios() {
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (ImGui::Button("cancel", ImVec2(w * 0.32f, h * 0.07f)))
+            if (glass::button("cancel", ImVec2(w * 0.32f, h * 0.07f)))
                 ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
@@ -551,7 +562,7 @@ void App::render_menu_ios() {
     // add game, opens the ios file picker to import a rom into the writable folder
     float add_w = w * 0.6f;
     ImGui::SetCursorPos(ImVec2((w - add_w) * 0.5f, h * 0.86f));
-    if (ImGui::Button("add game", ImVec2(add_w, h * 0.06f))) {
+    if (glass::button("add game", ImVec2(add_w, h * 0.06f))) {
         import_prev = rom_list;                         // snapshot so the new rom can be spotted afterwards
         gb_present_document_picker(rom_folder.c_str());
     }

@@ -16,6 +16,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "glass.h"
 
 #if GB_DESKTOP
 static int SDLCALL resize_watch(void* data, SDL_Event* e) {
@@ -618,10 +619,11 @@ bool App::cog_button(float cx, float cy, float r) {
     bool hot = ImGui::IsItemHovered();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 green = hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255);
+    ImU32 green = glass::fill(hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255));
     ImU32 white = IM_COL32(255, 255, 255, 255);
 
     dl->AddCircleFilled(ImVec2(cx, cy), r, green, 40);
+    glass::circle(dl, ImVec2(cx, cy), r);
     for (int i = 0; i < 8; i++) {
         float a = (float)i * 3.14159265f / 4.0f;
         float tx = cx + std::cos(a) * r * 0.42f;
@@ -639,10 +641,11 @@ bool App::back_button(float cx, float cy, float r) {
     bool hot = ImGui::IsItemHovered();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 green = hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255);
+    ImU32 green = glass::fill(hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255));
     ImU32 white = IM_COL32(255, 255, 255, 255);
 
     dl->AddCircleFilled(ImVec2(cx, cy), r, green, 40);
+    glass::circle(dl, ImVec2(cx, cy), r);
     float s = r * 0.30f;
     dl->PathLineTo(ImVec2(cx + s * 0.6f, cy - s));
     dl->PathLineTo(ImVec2(cx - s * 0.6f, cy));
@@ -717,11 +720,13 @@ void App::draw_settings(float w, float h) {
             if (clicked) settings_tab = i;
 
             bool on = (settings_tab == i);
-            ImU32 col = on  ? IM_COL32(87, 102, 5, 255)
-                      : hot ? IM_COL32(72, 84, 5, 255)
-                            : IM_COL32(48, 56, 4, 255);
+            ImU32 col = glass::fill(on  ? IM_COL32(87, 102, 5, 255)
+                                    : hot ? IM_COL32(72, 84, 5, 255)
+                                          : IM_COL32(48, 56, 4, 255));
             dl->AddRectFilled(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h + 26.0f * ui),
                               col, 12.0f * ui, ImDrawFlags_RoundCornersTop);
+            glass::rect(dl, ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h),
+                        12.0f * ui, ImDrawFlags_RoundCornersTop);
             ImVec2 ts = ImGui::CalcTextSize(tabs[i]);
             dl->AddText(ImVec2(tx + (tab_w - ts.x) * 0.5f, wp.y + (tab_h - ts.y) * 0.5f),
                         IM_COL32(0xE6, 0xED, 0xC7, 255), tabs[i]);
@@ -817,9 +822,10 @@ void App::draw_settings(float w, float h) {
                 if (!covered) {
                     ImDrawList* fg = ImGui::GetForegroundDrawList();
                     fg->PushClipRect(body_min, body_max, true);
-                    fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh),
-                                      hot_c ? IM_COL32(87, 102, 5, 255)
-                                            : IM_COL32(61, 71, 5, 255), 8.0f);
+                    ImU32 cbg = glass::fill(hot_c ? IM_COL32(87, 102, 5, 255)
+                                                  : IM_COL32(61, 71, 5, 255));
+                    fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh), cbg, 8.0f);
+                    glass::rect(fg, cpos, ImVec2(cpos.x + cw, cpos.y + chh), 8.0f);
                     ImVec2 cts = ImGui::CalcTextSize(items[cur]);
                     fg->AddText(ImVec2(cpos.x + cw - 12.0f - cts.x,
                                        cpos.y + (chh - cts.y) * 0.5f),
@@ -899,7 +905,7 @@ void App::draw_settings(float w, float h) {
                 ImGui::TextUnformatted(names[i]);
                 ImGui::SameLine();
                 bool waiting = (rebind_target == i);
-                if (waiting) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.40f, 0.47f, 0.03f, 1.0f));
+                if (waiting) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.40f, 0.47f, 0.03f, 0.50f));
                 std::string label = waiting ? "press a key" : SDL_GetKeyName(keybinds[i]);
                 for (char& ch : label) ch = (char)std::tolower((unsigned char)ch);
                 if (!waiting) {
@@ -911,7 +917,7 @@ void App::draw_settings(float w, float h) {
                 bp.x = right_edge - ctrl_gap - ctrl_w;
                 ImGui::SetCursorScreenPos(bp);
                 ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(1.0f, 0.5f));
-                if (ImGui::Button(label.c_str(), ImVec2(ctrl_w, 0)))
+                if (glass::button(label.c_str(), ImVec2(ctrl_w, 0)))
                     rebind_target = waiting ? -1 : i;
                 ImGui::PopStyleVar();
                 if (waiting) ImGui::PopStyleColor();
@@ -942,7 +948,7 @@ void App::draw_settings(float w, float h) {
         ImGui::EndChild();
 
         ImGui::SetCursorPos(ImVec2(pad, ws.y - pad - close_h));
-        if (ImGui::Button("close", ImVec2(inner_w, close_h))) {
+        if (glass::button("close", ImVec2(inner_w, close_h))) {
             settings_open = false;
             rebind_target = -1;
             ImGui::CloseCurrentPopup();
@@ -1085,9 +1091,9 @@ void App::setup_style() {
 
     ImVec4* c = s.Colors;
     c[ImGuiCol_WindowBg]      = ImVec4(0.09f, 0.10f, 0.06f, 1.00f);
-    c[ImGuiCol_Button]        = ImVec4(0.24f, 0.28f, 0.02f, 1.00f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.34f, 0.40f, 0.02f, 1.00f);
-    c[ImGuiCol_ButtonActive]  = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
+    c[ImGuiCol_Button]        = ImVec4(0.24f, 0.28f, 0.02f, 0.50f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.34f, 0.40f, 0.02f, 0.50f);
+    c[ImGuiCol_ButtonActive]  = ImVec4(0.18f, 0.21f, 0.02f, 0.50f);
     c[ImGuiCol_Text]          = ImVec4(0.90f, 0.93f, 0.78f, 1.00f);
     c[ImGuiCol_TitleBg]       = ImVec4(0.12f, 0.14f, 0.02f, 1.00f);
     c[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
@@ -1304,7 +1310,7 @@ void App::render_menu() {
 
     float tog_w = w * 0.13f, tog_h = h * 0.07f;
     ImGui::SetCursorPos(ImVec2(w - tog_w - w * 0.03f, h * 0.04f));
-    if (ImGui::Button(show_debug ? "games" : "test roms", ImVec2(tog_w, tog_h))) {
+    if (glass::button(show_debug ? "games" : "test roms", ImVec2(tog_w, tog_h))) {
         show_debug = !show_debug;
         carousel_pos = carousel_target = 0.0f;
         carousel_vel = 0.0f;
@@ -1479,14 +1485,14 @@ void App::render_menu() {
         float row_y  = title_y + h * 0.05f;
 
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
-        if (ImGui::Button("play", ImVec2(play_w, btn_h)))
+        if (glass::button("play", ImVec2(play_w, btn_h)))
             load_rom(rom_list[r_centre]);
 
         ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.35f, 0.10f, 0.05f, 1.0f));
-        if (ImGui::Button("delete", ImVec2(del_w, btn_h)))
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 0.50f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.35f, 0.10f, 0.05f, 0.50f));
+        if (glass::button("delete", ImVec2(del_w, btn_h)))
             ImGui::OpenPopup("confirm_delete");
         ImGui::PopStyleColor(3);
 
@@ -1497,8 +1503,8 @@ void App::render_menu() {
                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove)) {
             ImGui::TextUnformatted(("delete " + display_name(rom_list[r_centre]) + " ?").c_str());
             ImGui::Dummy(ImVec2(0, h * 0.02f));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 1.0f));
-            if (ImGui::Button("delete", ImVec2(w * 0.10f, btn_h))) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+            if (glass::button("delete", ImVec2(w * 0.10f, btn_h))) {
                 std::error_code ec;
                 std::filesystem::remove(rom_folder + rom_list[r_centre], ec);
                 scan_roms();
@@ -1508,7 +1514,7 @@ void App::render_menu() {
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (ImGui::Button("cancel", ImVec2(w * 0.10f, btn_h)))
+            if (glass::button("cancel", ImVec2(w * 0.10f, btn_h)))
                 ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
@@ -1520,7 +1526,7 @@ void App::render_menu() {
 
     float add_w = w * 0.16f;
     ImGui::SetCursorPos(ImVec2((w - add_w) * 0.5f, h * 0.88f));
-    if (ImGui::Button("add game", ImVec2(add_w, h * 0.07f)))
+    if (glass::button("add game", ImVec2(add_w, h * 0.07f)))
         add_game();
 
     draw_settings(w, h);
