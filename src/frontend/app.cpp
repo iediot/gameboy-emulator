@@ -269,11 +269,11 @@ void App::init_paths() {
                                                std::filesystem::copy_options::skip_existing, ec);
         }
     } else {
-        sprite_path     = "../sprites/gameboy.png";
-        cartridge_path  = "../sprites/cartridge.png";
-        icon_light_path = "../sprites/icon-mac-light.png";
-        icon_dark_path  = "../sprites/icon-mac-dark.png";
-        artwork_folder  = "../artworks/";
+        sprite_path     = "../assets/sprites/gameboy.png";
+        cartridge_path  = "../assets/sprites/cartridge.png";
+        icon_light_path = "../assets/sprites/icon-mac-light.png";
+        icon_dark_path  = "../assets/sprites/icon-mac-dark.png";
+        artwork_folder  = "../assets/artworks/";
         rom_folder      = "../roms/game-roms/";
     }
 #endif
@@ -658,6 +658,7 @@ void App::draw_settings(float w, float h) {
     float r = std::max(w, h) * 0.0245f;
     float m = r * 0.55f;
     float cog_y = r * 2.4f + h * 0.03f; // the ios menu already fills the bottom with add game
+    float cog_x = w - m - r;            // opposite the category toggle on the left
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * ui, 12.0f * ui));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * ui, 12.0f * ui));
 #else
@@ -666,14 +667,19 @@ void App::draw_settings(float w, float h) {
     float r = std::max(14.0f, std::min(w, h) * 0.030f);
     float m = r * 1.4f;
     float cog_y = h - m - r;
+    float cog_x = m + r;
 #endif
-    if (cog_button(m + r, cog_y, r)) {
+    if (cog_button(cog_x, cog_y, r)) {
         settings_open = true;
         settings_tab = (settings_tab < tab_count) ? settings_tab : 0;
         ImGui::OpenPopup("settings");
     }
+#if GB_DESKTOP
+    // on mobile render_game_ios draws its own back button and never reaches here, without
+    // the guard the menu frame that load_rom flips to PLAYING draws one at the wrong y
     if (state == AppState::PLAYING && back_button(m + r, m + r, r))
         state = AppState::MENU;
+#endif
 
     const char* tabs[2] = {"display", "keybinds"};
     float pad = 22.0f * ui, tab_h = 32.0f * ui, tab_gap = 8.0f * ui, close_h = 40.0f * ui;
@@ -768,9 +774,10 @@ void App::draw_settings(float w, float h) {
                     float item_h = chh * 0.86f;
                     float top    = cpos.y + chh * 0.45f;
                     float bottom = cpos.y + chh + n * item_h;
+                    // the open list floats over the panel, clipping it to the scrolling
+                    // body cut the last options off the bottom, it only has to stay on screen
                     ImDrawList* pdl = ImGui::GetWindowDrawList();
                     pdl->PushClipRectFullScreen();
-                    pdl->PushClipRect(body_min, body_max, true);
                     pdl->AddRectFilled(ImVec2(cpos.x - 1.0f, top),
                                        ImVec2(cpos.x + cw + 1.0f, bottom),
                                        IM_COL32(33, 38, 3, 255), 8.0f,
@@ -803,7 +810,6 @@ void App::draw_settings(float w, float h) {
                         ImGui::PopID();
                     }
                     ImGui::PopStyleVar();
-                    pdl->PopClipRect();
                     pdl->PopClipRect();
                     ImGui::EndCombo();
                 }

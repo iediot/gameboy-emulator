@@ -58,10 +58,10 @@ android {
 // covers, roms and sprites are staged into one folder that becomes the apk asset tree
 def stageGbAssets = tasks.register('stageGbAssets', Copy) {
     into stagedAssets
-    from(new File(repoRoot, 'sprites')) {
+    from(new File(repoRoot, 'assets/sprites')) {
         include 'emu-sprite.png', 'cartridge.png'
     }
-    from(new File(repoRoot, 'artworks')) {
+    from(new File(repoRoot, 'assets/artworks')) {
         into 'artworks'
         include '*.png'
     }

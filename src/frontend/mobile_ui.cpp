@@ -22,42 +22,140 @@ extern "C" bool gb_take_import_done();
 #define GB_TOUCH_DEBUG 0 // set to 1 to tint the touch zones for alignment checks
 
 namespace {
-    // the new bezel sprite is authored at iphone resolution, everything below is in this space
-    constexpr float kDesignW = 1290.0f;
-    constexpr float kDesignH = 2796.0f;
-    const SDL_Rect kLcd = {32, 368, 1226, 1075}; // the black screen area on the sprite
-
-    // invisible joypad zones, laid over the sprite buttons in the 1290x2796 space
     // joypad bits: 0 right, 1 left, 2 up, 3 down, 4 a, 5 b, 6 select, 7 start
-    struct TouchZone { SDL_Rect area; int bit; };
-    const TouchZone kZones[] = {
-        {{249, 1764, 126, 138}, 2}, // up
-        {{249, 2058, 126, 138}, 3}, // down
-        {{101, 1900, 139, 162}, 1}, // left
-        {{382, 1900, 139, 162}, 0}, // right
-        {{996, 1826, 184, 184}, 4}, // a
-        {{764, 1946, 184, 184}, 5}, // b
-        {{382, 2450, 192, 118}, 6}, // select
-        {{698, 2450, 192, 118}, 7}, // start
+    enum { BIT_RIGHT = 0, BIT_LEFT, BIT_UP, BIT_DOWN, BIT_A, BIT_B, BIT_SELECT, BIT_START };
+
+    constexpr ImU32 kBg     = IM_COL32(0x17, 0x1A, 0x0D, 0xFF);
+    constexpr ImU32 kFrame  = IM_COL32(0x27, 0x2B, 0x1A, 0xFF);
+    constexpr ImU32 kPad    = IM_COL32(0x3C, 0x41, 0x30, 0xFF);
+    constexpr ImU32 kPadOn  = IM_COL32(0x6B, 0x73, 0x58, 0xFF);
+    constexpr ImU32 kPivot  = IM_COL32(0x2A, 0x2E, 0x22, 0xFF);
+    constexpr ImU32 kFace   = IM_COL32(0x4F, 0x6E, 0x12, 0xFF);
+    constexpr ImU32 kFaceOn = IM_COL32(0x7B, 0xA0, 0x22, 0xFF);
+    constexpr ImU32 kPill   = IM_COL32(0x4A, 0x4F, 0x3E, 0xFF);
+    constexpr ImU32 kPillOn = IM_COL32(0x77, 0x7F, 0x64, 0xFF);
+    constexpr ImU32 kLabel  = IM_COL32(0xD8, 0xDC, 0xC6, 0xFF);
+
+    // every control is placed off the output size, render and hit testing both read this
+    // so the drawn shapes and the touch areas can never drift apart
+    struct Layout {
+        ImVec2 lcd_min, lcd_max;
+        ImVec2 pad;    float pad_arm, pad_half;
+        ImVec2 a, b;   float face_r;
+        ImVec2 select, start; ImVec2 pill_half;
     };
 
-    // the joypad bit under a bezel-space point, or -1 for none
-    int zone_at(float x, float y) {
-        for (const auto& z : kZones)
-            if (x >= z.area.x && x < z.area.x + z.area.w &&
-                y >= z.area.y && y < z.area.y + z.area.h)
-                return z.bit;
+    Layout layout_for(int out_w, int out_h) {
+        float w = (float)out_w, h = (float)out_h;
+        Layout l;
+
+        // the screen keeps its aspect but never takes more than its share of a squat
+        // display, otherwise the joypad below it runs out of room
+        float lcd_h = std::min(w * 0.94f * 144.0f / 160.0f, h * 0.46f);
+        float lcd_w = lcd_h * 160.0f / 144.0f;
+        // clears the back button rather than sitting at a fixed fraction, both are
+        // sized off the same radius so they never collide on any device
+        float br  = std::max(w, h) * 0.0245f;
+        float top = br * 2.4f + h * 0.03f + br * 1.6f;
+        l.lcd_min = ImVec2((w - lcd_w) * 0.5f, top);
+        l.lcd_max = ImVec2(l.lcd_min.x + lcd_w, l.lcd_min.y + lcd_h);
+
+        float rest    = h - l.lcd_max.y;
+        float pad_y   = l.lcd_max.y + rest * 0.42f;
+        float pill_y  = l.lcd_max.y + rest * 0.80f;
+
+        // control sizes come off the narrower of the width and the space under the
+        // screen, x positions stay on the width so the layout still spans the device
+        float u = std::min(w, h * 0.45f);
+
+        l.pad      = ImVec2(w * 0.25f, pad_y);
+        l.pad_arm  = u * 0.155f;
+        l.pad_half = l.pad_arm * 0.34f;
+
+        l.face_r = u * 0.082f;
+        l.a = ImVec2(w * 0.845f, pad_y - u * 0.047f);
+        l.b = ImVec2(w * 0.655f, pad_y + u * 0.047f);
+
+        l.pill_half = ImVec2(u * 0.105f, u * 0.032f);
+        l.select = ImVec2(w * 0.37f, pill_y);
+        l.start  = ImVec2(w * 0.63f, pill_y);
+        return l;
+    }
+
+    // hit areas run wider than the drawn shapes so a thumb landing on an edge still counts
+    int control_at(const Layout& l, float x, float y) {
+        float dx = x - l.pad.x, dy = y - l.pad.y;
+        float arm = l.pad_arm * 1.15f, half = l.pad_half * 1.45f;
+        bool vert = std::fabs(dx) <= half && std::fabs(dy) <= arm;
+        bool horz = std::fabs(dy) <= half && std::fabs(dx) <= arm;
+        if (vert && (!horz || std::fabs(dy) >= std::fabs(dx))) return dy < 0 ? BIT_UP : BIT_DOWN;
+        if (horz) return dx < 0 ? BIT_LEFT : BIT_RIGHT;
+
+        float fr = l.face_r * 1.3f;
+        float ax = x - l.a.x, ay = y - l.a.y;
+        if (ax * ax + ay * ay <= fr * fr) return BIT_A;
+        float bx = x - l.b.x, by = y - l.b.y;
+        if (bx * bx + by * by <= fr * fr) return BIT_B;
+
+        float pw = l.pill_half.x * 1.25f, ph = l.pill_half.y * 1.9f;
+        if (std::fabs(x - l.select.x) <= pw && std::fabs(y - l.select.y) <= ph) return BIT_SELECT;
+        if (std::fabs(x - l.start.x)  <= pw && std::fabs(y - l.start.y)  <= ph) return BIT_START;
         return -1;
     }
 
-    // the back-to-menu button, in screen pixels up in the top letterbox
-    SDL_Rect ios_back_rect(int out_w, int out_h) {
-        return {(int)(out_w * 0.04f), (int)(out_h * 0.045f), (int)(out_w * 0.20f), (int)(out_h * 0.05f)};
+    // same shape and palette as the cog and back buttons so the header reads as a pair
+    bool letter_button(float cx, float cy, float r, const char* label) {
+        ImGui::SetCursorScreenPos(ImVec2(cx - r, cy - r));
+        bool clicked = ImGui::InvisibleButton("##category", ImVec2(r * 2.0f, r * 2.0f));
+        bool hot = ImGui::IsItemHovered();
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddCircleFilled(ImVec2(cx, cy), r,
+                            hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255), 40);
+        ImFont* font = ImGui::GetFont();
+        float   size = r * 1.05f;
+        ImVec2  ts   = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
+        dl->AddText(font, size, ImVec2(cx - ts.x * 0.5f, cy - ts.y * 0.5f),
+                    IM_COL32(255, 255, 255, 255), label);
+        return clicked;
     }
 
-    // scale the sprite to cover the whole screen with a little overscan so its green edges bleed
-    // off and no letterbox seam shows, render and touch must use this same transform to stay aligned
-    constexpr float kOverscan = 1.04f;
+    void centred_label(ImDrawList* dl, ImVec2 c, float size, const char* text) {
+        ImFont* font = ImGui::GetFont();
+        ImVec2  ts   = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+        dl->AddText(font, size, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), kLabel, text);
+    }
+
+    void draw_controls(ImDrawList* dl, const Layout& l, const bool* held) {
+        float cx = l.pad.x, cy = l.pad.y, r = l.pad_arm, t = l.pad_half, rd = t * 0.45f;
+        dl->AddRectFilled(ImVec2(cx - t, cy - r), ImVec2(cx + t, cy + r), kPad, rd);
+        dl->AddRectFilled(ImVec2(cx - r, cy - t), ImVec2(cx + r, cy + t), kPad, rd);
+        if (held[BIT_UP])
+            dl->AddRectFilled(ImVec2(cx - t, cy - r), ImVec2(cx + t, cy), kPadOn, rd, ImDrawFlags_RoundCornersTop);
+        if (held[BIT_DOWN])
+            dl->AddRectFilled(ImVec2(cx - t, cy), ImVec2(cx + t, cy + r), kPadOn, rd, ImDrawFlags_RoundCornersBottom);
+        if (held[BIT_LEFT])
+            dl->AddRectFilled(ImVec2(cx - r, cy - t), ImVec2(cx, cy + t), kPadOn, rd, ImDrawFlags_RoundCornersLeft);
+        if (held[BIT_RIGHT])
+            dl->AddRectFilled(ImVec2(cx, cy - t), ImVec2(cx + r, cy + t), kPadOn, rd, ImDrawFlags_RoundCornersRight);
+        dl->AddCircleFilled(l.pad, t * 0.5f, kPivot, 28);
+
+        dl->AddCircleFilled(l.b, l.face_r, held[BIT_B] ? kFaceOn : kFace, 40);
+        dl->AddCircleFilled(l.a, l.face_r, held[BIT_A] ? kFaceOn : kFace, 40);
+        centred_label(dl, l.b, l.face_r * 0.85f, "B");
+        centred_label(dl, l.a, l.face_r * 0.85f, "A");
+
+        ImVec2 ph = l.pill_half;
+        dl->AddRectFilled(ImVec2(l.select.x - ph.x, l.select.y - ph.y),
+                          ImVec2(l.select.x + ph.x, l.select.y + ph.y),
+                          held[BIT_SELECT] ? kPillOn : kPill, ph.y);
+        dl->AddRectFilled(ImVec2(l.start.x - ph.x, l.start.y - ph.y),
+                          ImVec2(l.start.x + ph.x, l.start.y + ph.y),
+                          held[BIT_START] ? kPillOn : kPill, ph.y);
+        centred_label(dl, l.select, ph.y * 0.95f, "SELECT");
+        centred_label(dl, l.start,  ph.y * 0.95f, "START");
+    }
+
     // ios reports the window in points and the renderer in pixels, so the ratio between
     // them is the ui scale, android reports both in pixels and carries it in the density
     float ui_scale(int out_w, int win_w) {
@@ -72,13 +170,9 @@ namespace {
         return (win_w > 0) ? (float)out_w / win_w : 1.0f;
 #endif
     }
-
-    float cover_scale(int out_w, int out_h) {
-        return std::max(out_w / kDesignW, out_h / kDesignH) * kOverscan;
-    }
 }
 
-// draws the running game, the bezel is letterboxed into the real screen and the lcd sits on its green area
+// draws the running game, the lcd sits up top with the joypad drawn beneath it
 void App::render_game_ios() {
     // convert the framebuffer to argb, same olive palette as the desktop path
     uint32_t pixels[144 * 160];
@@ -99,37 +193,18 @@ void App::render_game_ios() {
     SDL_RenderSetViewport(renderer, nullptr);
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
 
-    // cover the device with the bezel keeping its aspect, overscanning so the edges bleed off
     int out_w, out_h;
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
-    float scale = cover_scale(out_w, out_h);
-    float off_x = (out_w - kDesignW * scale) * 0.5f;
-    float off_y = (out_h - kDesignH * scale) * 0.5f;
-    SDL_Rect bezel = {(int)off_x, (int)off_y, (int)(kDesignW * scale), (int)(kDesignH * scale)};
+    Layout l = layout_for(out_w, out_h);
 
-    // the lcd rect scaled and offset the same way as the bezel
-    SDL_Rect lcd = {(int)(off_x + kLcd.x * scale),
-                    (int)(off_y + kLcd.y * scale),
-                    (int)(kLcd.w * scale),
-                    (int)(kLcd.h * scale)};
-
-    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0d, 0xFF); // dark olive letterbox bars
+    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0d, 0xFF);
     SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, gameboy_sprite, nullptr, &bezel);
-    SDL_RenderCopy(renderer, texture, nullptr, &lcd);
 
-#if GB_TOUCH_DEBUG
-    // tint the joypad zones so their placement over the bezel can be eyeballed
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0x60);
-    for (const auto& z : kZones) {
-        SDL_Rect r = {(int)(off_x + z.area.x * scale), (int)(off_y + z.area.y * scale),
-                      (int)(z.area.w * scale), (int)(z.area.h * scale)};
-        SDL_RenderFillRect(renderer, &r);
-    }
-#endif
+    bool held[8] = {};
+    for (const auto& f : touch_buttons)
+        if (f.second >= 0 && f.second < 8) held[f.second] = true;
 
-    // the round back button is drawn through imgui so it matches the desktop one
+    // screen and joypad both go through the overlay draw list so they layer in one pass
     ImGui_ImplSDLRenderer2_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGuiIO& io = ImGui::GetIO();
@@ -147,9 +222,30 @@ void App::render_game_ios() {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float inset = out_w * 0.018f;
+    float round = out_w * 0.03f;
+    dl->AddRectFilled(ImVec2(l.lcd_min.x - inset, l.lcd_min.y - inset),
+                      ImVec2(l.lcd_max.x + inset, l.lcd_max.y + inset),
+                      kFrame, round);
+    // concentric with the frame, so the grey border keeps an even width round the corners
+    dl->AddImageRounded((ImTextureID)texture, l.lcd_min, l.lcd_max,
+                        ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, round - inset);
+    draw_controls(dl, l, held);
+
+#if GB_TOUCH_DEBUG
+    // walk the screen and dot every point that maps to a control, shows the real hit areas
+    for (int y = (int)l.lcd_max.y; y < out_h; y += 12)
+        for (int x = 0; x < out_w; x += 12)
+            if (control_at(l, (float)x, (float)y) >= 0)
+                dl->AddRectFilled(ImVec2((float)x, (float)y), ImVec2(x + 3.0f, y + 3.0f),
+                                  IM_COL32(0xFF, 0x00, 0x00, 0x90));
+#endif
+
     float br = std::max((float)out_w, (float)out_h) * 0.0245f;
     if (back_button(br * 1.55f, br * 2.4f + out_h * 0.03f, br)) {
-        for (auto& held : touch_buttons) mem->set_button(held.second, false);
+        for (auto& h : touch_buttons) mem->set_button(h.second, false);
         touch_buttons.clear();
         state = AppState::MENU;
     }
@@ -236,17 +332,14 @@ void App::render_menu_ios() {
             view.push_back(i);
     int count = (int)view.size();
 
-    // small, subtle category toggle tucked in the top-right corner: "d" for the debug/test roms, "g" for games
-    float tog = w * 0.11f;
-    ImGui::SetCursorPos(ImVec2(w - tog - w * 0.04f, h * 0.055f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.09f, 0.10f, 0.06f, 1.0f));        // same tone as the background
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.13f, 0.15f, 0.08f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.13f, 0.15f, 0.08f, 1.0f));
-    if (ImGui::Button(show_debug ? "g" : "d", ImVec2(tog, h * 0.035f))) {
+    // category toggle on the left of the header, the cog sits opposite it on the right:
+    // "d" for the debug/test roms, "g" for games
+    float hdr_r = std::max(w, h) * 0.0245f;
+    float hdr_y = hdr_r * 2.4f + h * 0.03f;
+    if (letter_button(hdr_r * 1.55f, hdr_y, hdr_r, show_debug ? "g" : "d")) {
         show_debug = !show_debug;
         carousel_pos = carousel_target = 0.0f; carousel_vel = 0.0f;
     }
-    ImGui::PopStyleColor(3);
 
     if (count == 0) {
         ImGui::SetCursorPos(ImVec2(0, h * 0.45f));
@@ -491,11 +584,7 @@ void App::handle_touch_ios(const SDL_Event& event) {
     if ((px - bcx) * (px - bcx) + (py - bcy) * (py - bcy) <= (br * 1.6f) * (br * 1.6f))
         return;
 
-    // map the touch back into bezel space with the same cover transform the renderer uses
-    float scale = cover_scale(out_w, out_h);
-    float dx = (px - (out_w - kDesignW * scale) * 0.5f) / scale;
-    float dy = (py - (out_h - kDesignH * scale) * 0.5f) / scale;
-    int bit = zone_at(dx, dy);
+    int bit = control_at(layout_for(out_w, out_h), px, py);
     SDL_FingerID id = event.tfinger.fingerId;
 
     if (event.type == SDL_FINGERDOWN) {

@@ -10,9 +10,9 @@
 #include <vector>
 #include <map>
 #include "platform.h"
-#include "memory.h"
-#include "cpu.h"
-#include "ppu.h"
+#include "core/memory.h"
+#include "core/cpu.h"
+#include "core/ppu.h"
 
 #if defined(__APPLE__) || defined(__ANDROID__)
 #include <SDL.h>

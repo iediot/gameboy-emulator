@@ -3,7 +3,7 @@
 #if GB_MOBILE
 #include <SDL.h>
 #endif
-#include "app.h"
+#include "frontend/app.h"
 
 int main(int argc, char** argv) {
     (void)argc;

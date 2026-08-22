@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="sprites/icon-mac-light.png" width="256" alt="gameboy-emu icon">
+<img src="assets/sprites/icon-mac-light.png" width="256" alt="gameboy-emu icon">
 
 # gameboy-emu
 
@@ -140,7 +140,7 @@ copied there:
 └── settings.txt    # scale, frame cap, vsync, hidpi, window geometry, keybinds
 ```
 
-Cover art is matched to a ROM by fuzzy name comparison against `artworks/`, so
+Cover art is matched to a ROM by fuzzy name comparison against `assets/artworks/`, so
 `Super Mario Land 2 - 6 Golden Coins (USA, Europe) (Rev 2).gb` still finds its box art.
 
 On iOS the same layout sits inside the app container. On Android the covers stay
