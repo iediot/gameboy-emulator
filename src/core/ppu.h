@@ -37,6 +37,7 @@ public:
 
     // variables used throughout ppu
     uint16_t scanline_cycles = 0;
+    bool lcd_was_on = true;
     uint8_t framebuffer[144][160] = {};
     uint8_t prev_mode = 0;
     uint8_t window_line_counter = 0;

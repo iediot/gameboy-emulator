@@ -54,11 +54,19 @@ public:
     uint8_t dma_delay = 0;
     void step_dma();
 
+    // dmg oam corruption bug, the ppu is mid scan and the bus fight mangles a row
+    uint16_t oam_word(int row, int word) const;
+    void set_oam_word(int row, int word, uint16_t value);
+    void oam_corrupt(int row, bool read);
+    void oam_corrupt_read_inc(int row);
+
     void write_mbc1(uint16_t address, uint8_t value);
     void write_mbc3(uint16_t address, uint8_t value);
     void write_mbc5(uint16_t address, uint8_t value);
     void sync_div(uint8_t value);
     uint8_t read(uint16_t address);
+    // the ppu has its own path to vram and oam, the cpu facing blocking does not apply
+    uint8_t ppu_read(uint16_t address) const;
     void write(uint16_t address, uint8_t value);
     void loadRom(const std::vector<uint8_t>& rom_to_load);
     uint8_t read_raw(uint16_t address) { return data[address]; }

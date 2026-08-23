@@ -188,16 +188,16 @@ void Cpu::cp(uint8_t value) { // helper for the 'cp' (compare) operation
 
 void Cpu::ret() { // helper for 'ret' operation
     uint8_t low = read_and_tick(SP);
-    SP++;
+    sp_step(1);
     uint8_t high = read_and_tick(SP);
-    SP++;
+    sp_step(1);
     PC = combine(high, low);
 }
 
 void Cpu::rst(uint16_t address) { // helper for the 'rst' (reset) operation
-    SP--;
+    sp_step(-1);
     write_and_tick(SP, (PC >> 8) & 0xFF);
-    SP--;
+    sp_step(-1);
     write_and_tick(SP, PC & 0xFF);
     PC = address;
 }
@@ -207,9 +207,9 @@ void Cpu::call() { // helper for the 'call' operation
     uint8_t high = read_and_tick(PC + 1);
     PC += 2;
     tick(4);
-    SP--;
+    sp_step(-1);
     write_and_tick(SP, (PC >> 8) & 0xFF);
-    SP--;
+    sp_step(-1);
     write_and_tick(SP, PC & 0xFF);
     PC = combine(high, low);
 }
@@ -394,6 +394,29 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
     }
 }
 
+// a 16 bit register pointing into oam while the ppu is scanning it corrupts the row
+void Cpu::oam_bug(uint16_t address, bool read) {
+    if (address < 0xFE00 || address > 0xFEFF)
+        return;
+    if (!(mem.read(0xFF40) & 0x80) || (mem.read(0xFF41) & 0x03) != 2)
+        return;
+    mem.oam_corrupt(ppu.scanline_cycles >> 2, read);
+}
+
+void Cpu::oam_bug_read_inc(uint16_t address) {
+    if (address < 0xFE00 || address > 0xFEFF)
+        return;
+    if (!(mem.read(0xFF40) & 0x80) || (mem.read(0xFF41) & 0x03) != 2)
+        return;
+    mem.oam_corrupt_read_inc(ppu.scanline_cycles >> 2);
+}
+
+// every implicit stack pointer step is its own chance to corrupt oam
+void Cpu::sp_step(int delta) {
+    oam_bug(SP, false);
+    SP = (uint16_t)(SP + delta);
+}
+
 uint8_t Cpu::read_and_tick(uint16_t address) {
     tick(4);
     return mem.read(address);
@@ -469,6 +492,7 @@ uint8_t Cpu::step() {
 
     case 0x03: { // INC BC
             tick(4);
+            oam_bug(bc(), false);
             set_bc(bc() + 1);
             break;
         }
@@ -529,6 +553,7 @@ uint8_t Cpu::step() {
 
     case 0x0B: { // DEC BC
             tick(4);
+            oam_bug(bc(), false);
             set_bc(bc() - 1);
             break;
         }
@@ -581,6 +606,7 @@ uint8_t Cpu::step() {
 
     case 0x13: { // INC DE
             tick(4);
+            oam_bug(de(), false);
             set_de(de() + 1);
             break;
         }
@@ -638,6 +664,7 @@ uint8_t Cpu::step() {
 
     case 0x1B: { // DEC DE
             tick(4);
+            oam_bug(de(), false);
             set_de(de() - 1);
             break;
         }
@@ -689,12 +716,14 @@ uint8_t Cpu::step() {
 
     case 0x22: { // LD (HL+), A
             write_and_tick(hl(), A);
+            oam_bug(hl(), false);
             set_hl(hl() + 1);
             break;
         }
 
     case 0x23: { // INC HL
             tick(4);
+            oam_bug(hl(), false);
             set_hl(hl() + 1);
             break;
         }
@@ -767,12 +796,14 @@ uint8_t Cpu::step() {
 
     case 0x2A: { // LD A, (HL+)
             A = read_and_tick(hl());
+            oam_bug_read_inc(hl());
             set_hl(hl() + 1);
             break;
         }
 
     case 0x2B: { // DEC HL
             tick(4);
+            oam_bug(hl(), false);
             set_hl(hl() - 1);
             break;
         }
@@ -826,13 +857,14 @@ uint8_t Cpu::step() {
 
     case 0x32: { // LD (HL-), A
             write_and_tick(hl(), A);
+            oam_bug(hl(), false);
             set_hl(hl() - 1);
             break;
         }
 
     case 0x33: { // INC SP
             tick(4);
-            SP++;
+            sp_step(1);
             break;
         }
 
@@ -893,13 +925,14 @@ uint8_t Cpu::step() {
 
     case 0x3A: { // LD A, (HL-)
             A = read_and_tick(hl());
+            oam_bug_read_inc(hl());
             set_hl(hl() - 1);
             break;
         }
 
     case 0x3B: { // DEC SP
             tick(4);
-            SP--;
+            sp_step(-1);
             break;
         }
 
@@ -1574,9 +1607,9 @@ uint8_t Cpu::step() {
 
     case 0xC1: { // POP BC
             uint8_t low = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             uint8_t high = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             set_bc(combine(high, low));
             break;
         }
@@ -1615,9 +1648,10 @@ uint8_t Cpu::step() {
             tick(4);
             uint8_t low = bc();
             uint8_t high = bc() >> 8;
-            write_and_tick(SP - 1, high);
-            write_and_tick(SP - 2, low);
-            SP -= 2;
+            sp_step(-1);
+            write_and_tick(SP, high);
+            sp_step(-1);
+            write_and_tick(SP, low);
             break;
         }
 
@@ -3002,9 +3036,9 @@ uint8_t Cpu::step() {
 
     case 0xD1: { // POP DE
             uint8_t low = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             uint8_t high = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             set_de(combine(high, low));
             break;
         }
@@ -3035,9 +3069,10 @@ uint8_t Cpu::step() {
             tick(4);
             uint8_t low = de();
             uint8_t high = de() >> 8;
-            write_and_tick(SP - 1, high);
-            write_and_tick(SP - 2, low);
-            SP -= 2;
+            sp_step(-1);
+            write_and_tick(SP, high);
+            sp_step(-1);
+            write_and_tick(SP, low);
             break;
         }
 
@@ -3113,9 +3148,9 @@ uint8_t Cpu::step() {
 
     case 0xE1: { // POP HL
             uint8_t low = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             uint8_t high = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             set_hl(combine(high, low));
             break;
         }
@@ -3129,9 +3164,10 @@ uint8_t Cpu::step() {
             tick(4);
             uint8_t low = hl();
             uint8_t high = hl() >> 8;
-            write_and_tick(SP - 1, high);
-            write_and_tick(SP - 2, low);
-            SP -= 2;
+            sp_step(-1);
+            write_and_tick(SP, high);
+            sp_step(-1);
+            write_and_tick(SP, low);
             break;
         }
 
@@ -3197,9 +3233,9 @@ uint8_t Cpu::step() {
 
     case 0xF1: { // POP AF
             uint8_t low = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             uint8_t high = read_and_tick(SP);
-            SP++;
+            sp_step(1);
             set_af(combine(high, low));
             break;
         }
@@ -3219,9 +3255,10 @@ uint8_t Cpu::step() {
             tick(4);
             uint8_t low = af();
             uint8_t high = af() >> 8;
-            write_and_tick(SP - 1, high);
-            write_and_tick(SP - 2, low);
-            SP -= 2;
+            sp_step(-1);
+            write_and_tick(SP, high);
+            sp_step(-1);
+            write_and_tick(SP, low);
             break;
         }
 

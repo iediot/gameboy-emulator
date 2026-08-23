@@ -51,6 +51,9 @@ public:
     bool last_apu_bit = false;    // bit 12 of internal_div from last t-cycle, clocks the frame sequencer
     uint8_t tima_reload_delay = 0;
     void tick(uint8_t cycles);
+    void oam_bug(uint16_t address, bool read);
+    void sp_step(int delta);
+    void oam_bug_read_inc(uint16_t address);
 
     uint8_t read_and_tick(uint16_t address);
     void write_and_tick(uint16_t address, uint8_t value);

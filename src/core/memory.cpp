@@ -71,6 +71,49 @@ void Memory::sync_div(uint8_t value) {
     data[0xFF04] = value;
 }
 
+uint16_t Memory::oam_word(int row, int word) const {
+    uint16_t a = 0xFE00 + row * 8 + word * 2;
+    return (uint16_t)(data[a] | (data[a + 1] << 8));
+}
+
+void Memory::set_oam_word(int row, int word, uint16_t value) {
+    uint16_t a = 0xFE00 + row * 8 + word * 2;
+    data[a] = value & 0xFF;
+    data[a + 1] = value >> 8;
+}
+
+// oam is twenty rows of four words, the row being scanned gets its first word mangled
+// with the row before it and the rest copied straight from it, row 0 is immune
+void Memory::oam_corrupt(int row, bool read) {
+    if (row <= 0 || row > 19)
+        return;
+    uint16_t a = oam_word(row, 0);
+    uint16_t b = oam_word(row - 1, 0);
+    uint16_t c = oam_word(row - 1, 2);
+    set_oam_word(row, 0, read ? (uint16_t)(b | (a & c))
+                              : (uint16_t)(((a ^ c) & (b ^ c)) ^ c));
+    for (int w = 1; w < 4; w++)
+        set_oam_word(row, w, oam_word(row - 1, w));
+}
+
+// a read that happens in the same step as the register increment mangles the preceding
+// row first and smears it over its neighbours, then the ordinary read corruption lands
+void Memory::oam_corrupt_read_inc(int row) {
+    if (row >= 4 && row < 19) {
+        uint16_t a = oam_word(row - 2, 0);
+        uint16_t b = oam_word(row - 1, 0);
+        uint16_t c = oam_word(row, 0);
+        uint16_t d = oam_word(row - 1, 2);
+        set_oam_word(row - 1, 0, (uint16_t)((b & (a | c | d)) | (a & c & d)));
+        for (int w = 0; w < 4; w++) {
+            uint16_t v = oam_word(row - 1, w);
+            set_oam_word(row, w, v);
+            set_oam_word(row - 2, w, v);
+        }
+    }
+    oam_corrupt(row, true);
+}
+
 void Memory::step_dma() {
     if (!dma_active) return;
     if (++dma_tick < 4) return;
@@ -80,6 +123,10 @@ void Memory::step_dma() {
     }
     data[0xFE00 + dma_index] = read(dma_source + dma_index);
     if (++dma_index == 160) dma_active = false;
+}
+
+uint8_t Memory::ppu_read(uint16_t address) const {
+    return data[address];
 }
 
 uint8_t Memory::read(uint16_t address) {

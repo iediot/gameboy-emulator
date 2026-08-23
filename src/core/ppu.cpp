@@ -14,7 +14,7 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base) {
     uint8_t tile_row = y / 8;
 
     uint16_t map_address = map_base + tile_row * 32 + tile_col;
-    uint8_t tile_index = mem.read(map_address);
+    uint8_t tile_index = mem.ppu_read(map_address);
 
     // find the tile's pixel data in VRAM
     uint16_t tile_address;
@@ -28,8 +28,8 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base) {
     // row of pixel data
     uint8_t pixel_row = y % 8;
     uint16_t row_address = tile_address + pixel_row * 2;
-    uint8_t byte_low = mem.read(row_address);
-    uint8_t byte_high = mem.read(row_address + 1);
+    uint8_t byte_low = mem.ppu_read(row_address);
+    uint8_t byte_high = mem.ppu_read(row_address + 1);
 
     // 2-bit color id
     uint8_t pixel_col = x % 8;
@@ -63,10 +63,10 @@ void Ppu::draw_sprite() {
 
     for (int i = 0; i < 40; i++) {
         // we use int here to avoid underflow
-        int y = mem.read(0xFE00 + i*4) - 16;
-        uint8_t x = mem.read(0xFE00 + i*4 + 1);
-        uint8_t tile_index = mem.read(0xFE00 + i*4 + 2);
-        uint8_t flags = mem.read(0xFE00 + i*4 + 3);
+        int y = mem.ppu_read(0xFE00 + i*4) - 16;
+        uint8_t x = mem.ppu_read(0xFE00 + i*4 + 1);
+        uint8_t tile_index = mem.ppu_read(0xFE00 + i*4 + 2);
+        uint8_t flags = mem.ppu_read(0xFE00 + i*4 + 3);
 
         // scanline filter
         if (LY < y || LY >= (y + sprite_height))
@@ -101,8 +101,8 @@ void Ppu::draw_sprite() {
             row = (sprite_height - 1) - row;
 
         uint16_t row_address = 0x8000 + tile_index * 16 + row * 2;
-        uint8_t low_byte = mem.read(row_address);
-        uint8_t high_byte = mem.read(row_address + 1);
+        uint8_t low_byte = mem.ppu_read(row_address);
+        uint8_t high_byte = mem.ppu_read(row_address + 1);
 
         for (int c = 0; c < 8; c++)
         {
@@ -232,7 +232,15 @@ void Ppu::step(uint8_t cycles) {
         window_line_counter = 0;
         stat_line = false;
         prev_mode = 0;
+        lcd_was_on = false;
         return;
+    }
+
+    // switching the lcd on does not restart the scanline from zero, the ppu picks up
+    // one m-cycle in, which is what oam_bug/1-lcd_sync measures
+    if (!lcd_was_on) {
+        lcd_was_on = true;
+        scanline_cycles = 4;
     }
 
     scanline_cycles += cycles;
