@@ -13,3 +13,6 @@ android/app/.cxx/
 android/local.properties
 android/.idea/
 android/keystore.jks
+
+# audio captures from test runs
+*.wav

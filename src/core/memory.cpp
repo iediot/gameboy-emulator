@@ -83,8 +83,7 @@ void Memory::step_dma() {
 }
 
 uint8_t Memory::read(uint16_t address) {
-    if (apu != nullptr && ((address >= 0xFF10 && address <= 0xFF26)
-            || (address >= 0xFF30 && address <= 0xFF3F))) {
+    if (apu != nullptr && address >= 0xFF10 && address <= 0xFF3F) {
                 return apu->read(address);
             }
 
@@ -167,8 +166,7 @@ uint8_t Memory::read(uint16_t address) {
 }
 
 void Memory::write(uint16_t address, uint8_t value) {
-    if (apu != nullptr && ((address >= 0xFF10 && address <= 0xFF26)
-            || (address >= 0xFF30 && address <= 0xFF3F))) {
+    if (apu != nullptr && address >= 0xFF10 && address <= 0xFF3F) {
                 apu->write(address, value);
                 return;
             }
@@ -230,22 +228,20 @@ void Memory::write(uint16_t address, uint8_t value) {
     if (address >= 0xFE00 && address <= 0xFE9F && dma_active)
         return;
 
+    // a blocked write is thrown away, the byte keeps whatever it already held, writing
+    // 0xFF into it instead corrupts tiles and oam entries
     uint8_t mode = data[0xFF41] & 0x03;
     bool lcd_on  = data[0xFF40] & 0x80;
     if (lcd_on && mode == 3 && address >= 0x8000 && address <= 0x9FFF)
-        value = 0xFF;
+        return;
     if (lcd_on && mode >= 2  && address >= 0xFE00 && address <= 0xFE9F)
-        value = 0xFF;
+        return;
 
     data[address] = value;
 
-    /*
-    // serial output used by test roms to print
-    if (address == 0xFF01) {
+    // serial output, test roms print their results through it
+    if (address == 0xFF01)
         serial_buffer.push_back(static_cast<char>(value));
-        std::cout << static_cast<char>(value) << std::flush;
-    }
-    */
 }
 
 void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {

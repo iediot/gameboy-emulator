@@ -403,6 +403,8 @@ void App::load_settings() {
             int v; if (f >> v) hidpi = (v != 0);
         } else if (key == "cartridge") {
             int v; if (f >> v) render_cartridge = (v != 0);
+        } else if (key == "volume") {
+            float v; if (f >> v && v >= 0.0f && v <= 1.0f) volume = v;
         } else if (key == "window") {
             int ww, wh;
             if (f >> ww >> wh && ww >= 480 && wh >= 360 && ww <= 16384 && wh <= 16384) {
@@ -434,6 +436,7 @@ void App::save_settings() {
     f << "vsync " << (vsync ? 1 : 0) << "\n";
     f << "hidpi " << (hidpi ? 1 : 0) << "\n";
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
+    f << "volume " << volume << "\n";
 #if GB_DESKTOP
     if (window) {
         int ww = win_w, wh = win_h, wx = win_x, wy = win_y;
@@ -480,6 +483,9 @@ void App::run() {
             }
             ppu->frame_ready = false;
             if (!apu->samples.empty()) {
+                if (volume < 0.999f)
+                    for (int16_t& sample : apu->samples)
+                        sample = (int16_t)(sample * volume);
                 SDL_QueueAudio(audio_device, apu->samples.data(),
                                (Uint32)(apu->samples.size() * sizeof(int16_t)));
                 apu->samples.clear();
@@ -676,7 +682,7 @@ bool App::back_button(float cx, float cy, float r) {
 
 void App::draw_settings(float w, float h) {
 #if GB_MOBILE
-    const int tab_count = 1;
+    const int tab_count = 2;
     float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
     float r = std::max(w, h) * 0.0245f;
     float m = r * 0.55f;
@@ -685,7 +691,7 @@ void App::draw_settings(float w, float h) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * ui, 12.0f * ui));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * ui, 12.0f * ui));
 #else
-    const int tab_count = 2;
+    const int tab_count = 3;
     float ui = 1.0f;
     float r = std::max(14.0f, std::min(w, h) * 0.030f);
     float m = r * 1.4f;
@@ -704,9 +710,11 @@ void App::draw_settings(float w, float h) {
         state = AppState::MENU;
 #endif
 
-    const char* tabs[2] = {"display", "keybinds"};
+    const char* tabs[3] = {"display", "audio", "keybinds"};
     float pad = 22.0f * ui, tab_h = 32.0f * ui, tab_gap = 8.0f * ui, close_h = 40.0f * ui;
-    float tab_w = std::max(ImGui::CalcTextSize(tabs[0]).x, ImGui::CalcTextSize(tabs[1]).x) + 34.0f * ui;
+    float tab_w = std::max({ImGui::CalcTextSize(tabs[0]).x,
+                            ImGui::CalcTextSize(tabs[1]).x,
+                            ImGui::CalcTextSize(tabs[2]).x}) + 34.0f * ui;
 
     float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
 #if GB_MOBILE
@@ -915,6 +923,39 @@ void App::draw_settings(float w, float h) {
                 save_settings();
             }
 #endif
+        } else if (settings_tab == 1) {
+            auto slider_row = [&](const char* text, const char* id, float v) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(text);
+                ImGui::SameLine();
+
+                float fh = ImGui::GetFrameHeight();
+                float sw = ctrl_w;
+                float th = fh * 0.34f;
+                ImVec2 sp = ImGui::GetCursorScreenPos();
+                sp.x = right_edge - ctrl_gap - sw;
+                ImGui::SetCursorScreenPos(sp);
+                ImGui::InvisibleButton(id, ImVec2(sw, fh));
+                bool hot_s = ImGui::IsItemHovered() || ImGui::IsItemActive();
+                if (ImGui::IsItemActive())
+                    v = std::clamp((ImGui::GetIO().MousePos.x - sp.x) / sw, 0.0f, 1.0f);
+
+                float ty = sp.y + (fh - th) * 0.5f;
+                ImDrawList* sdl = ImGui::GetWindowDrawList();
+                sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw, ty + th),
+                                   IM_COL32(38, 44, 3, 255), th * 0.5f);
+                if (v > 0.0f)
+                    sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw * v, ty + th),
+                                       hot_s ? IM_COL32(87, 102, 5, 255)
+                                             : IM_COL32(61, 71, 5, 255), th * 0.5f);
+                sdl->AddCircleFilled(ImVec2(sp.x + sw * v, ty + th * 0.5f), fh * 0.26f,
+                                     IM_COL32(255, 255, 255, 255), 24);
+                return v;
+            };
+
+            volume = slider_row("volume", "##volume", volume);
+            if (ImGui::IsItemDeactivated())
+                save_settings();
         } else {
             const char* names[8] = {"right", "left", "up", "down", "a", "b", "select", "start"};
             const int order[8] = {2, 3, 1, 0, 4, 5, 6, 7};

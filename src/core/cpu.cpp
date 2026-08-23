@@ -378,6 +378,14 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
             }
         }
         last_and_result = and_result;
+
+        // the apu frame sequencer runs off the same counter as the timer, one step on
+        // every falling edge of bit 12, which is 4194304 / 8192 = 512 hz
+        bool apu_bit = (internal_div >> 12) & 1;
+        if (last_apu_bit && !apu_bit)
+            apu.frame_tick();
+        last_apu_bit = apu_bit;
+
         ppu.step(1);
         apu.step(1);
         mem.step_dma();
@@ -436,7 +444,10 @@ uint8_t Cpu::step() {
     }
 
     uint8_t opcode = read_and_tick(PC);
-    PC++;
+    if (halt_bug)
+        halt_bug = false;   // pc stays put, so this byte comes round again
+    else
+        PC++;
 
     switch (opcode)
     {
@@ -1180,7 +1191,12 @@ uint8_t Cpu::step() {
         }
 
     case 0x76: { // HALT
-            halted = true;
+            // with ime off and an interrupt already pending the cpu never halts, it
+            // fetches the following byte without advancing past it
+            if (!IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F))
+                halt_bug = true;
+            else
+                halted = true;
             break;
         }
 

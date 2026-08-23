@@ -39,6 +39,7 @@ private:
     SDL_Renderer* renderer = nullptr;
     SDL_Texture* texture = nullptr;
     SDL_AudioDeviceID audio_device;
+    float volume = 0.7f;
     SDL_Texture* gameboy_sprite;
     SDL_Texture* cartridge_sprite;
     SDL_Texture* cartridge_shadow;
