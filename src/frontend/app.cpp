@@ -2,12 +2,12 @@
 // Created by edi on 5/23/26.
 //
 
-#include <iostream>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <algorithm>
-#include <cmath>
-#include <cctype>
+#include <iostream>
 #include "platform.h" // first so GB_DESKTOP is defined before the guard below
 #if GB_DESKTOP
 #include <nfd.h> // native desktop file dialog, no ios equivalent
@@ -143,9 +143,7 @@ void App::create_video() {
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING, 160, 144);
     SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest); // keep the gameboy pixels sharp when scaled up
-    gameboy_sprite = nullptr;
 #if GB_MOBILE
-    gameboy_sprite = IMG_LoadTexture(renderer, sprite_path.c_str());
 #endif
     cartridge_sprite = IMG_LoadTexture(renderer, cartridge_path.c_str());
     if (cartridge_sprite) {
@@ -180,7 +178,6 @@ void App::destroy_video() {
             SDL_DestroyTexture(cover);
     cover_list.clear();
     SDL_DestroyTexture(texture);
-    SDL_DestroyTexture(gameboy_sprite);
     SDL_DestroyTexture(cartridge_sprite);
     SDL_DestroyTexture(cartridge_shadow);
     SDL_DestroyTexture(rect_shadow);
@@ -229,14 +226,12 @@ void App::init_paths() {
 #if GB_ANDROID
     // assets live inside the apk, sdl_rwops resolves these relative paths through
     // the asset manager, so there is no base path to prefix them with
-    sprite_path    = "emu-sprite.png";
     cartridge_path = "cartridge.png";
     artwork_folder = "artworks/";
 #else
     char* base = SDL_GetBasePath();
     std::string b = base ? base : "";
     if (base) SDL_free(base);
-    sprite_path    = b + "emu-sprite.png"; // full-res ios bezel, the old gameboy.png stays unused
     cartridge_path = b + "cartridge.png";
     artwork_folder = b + "artworks/";      // read-only, shipped in the bundle
 #endif
@@ -267,7 +262,6 @@ void App::init_paths() {
 
     bundled = !res.empty();
     if (bundled) {
-        sprite_path     = res + "gameboy.png";
         cartridge_path  = res + "cartridge.png";
         icon_light_path = res + "icon-mac-light.png";
         icon_dark_path  = res + "icon-mac-dark.png";
@@ -283,7 +277,6 @@ void App::init_paths() {
                                                std::filesystem::copy_options::skip_existing, ec);
         }
     } else {
-        sprite_path     = "../assets/sprites/gameboy.png";
         cartridge_path  = "../assets/sprites/cartridge.png";
         icon_light_path = "../assets/sprites/icon-mac-light.png";
         icon_dark_path  = "../assets/sprites/icon-mac-dark.png";
@@ -452,6 +445,7 @@ void App::save_settings() {
 
 // destructor
 App::~App() {
+    save_battery_ram();
     destroy_video();
     ImGui::DestroyContext();
 #if GB_DESKTOP
@@ -482,6 +476,10 @@ void App::run() {
                 cpu->step();
             }
             ppu->frame_ready = false;
+            if (++battery_flush >= 60) {
+                battery_flush = 0;
+                save_battery_ram();
+            }
             if (!apu->samples.empty()) {
                 if (volume < 0.999f)
                     for (int16_t& sample : apu->samples)
@@ -496,6 +494,8 @@ void App::run() {
         }
 
         if (state != prev_state) {
+            if (prev_state == AppState::PLAYING)
+                save_battery_ram();
             ImGui::GetIO().ClearInputKeys();
             ImGui::GetIO().ClearInputMouse();
             prev_state = state;
@@ -549,15 +549,43 @@ void App::load_rom(const std::string& name) {
     }
     std::vector<uint8_t> rom_data{std::istreambuf_iterator<char>(rom_file),
         std::istreambuf_iterator<char>()};
-    mem->loadRom(rom_data);
+    mem->load_rom(rom_data);
 
+    load_battery_ram(name);
     state = AppState::PLAYING;
+}
+
+void App::load_battery_ram(const std::string& name) {
+    save_path.clear();
+    if (!mem->has_battery || mem->external_ram.empty())
+        return;
+    save_path = rom_folder + std::filesystem::path(name).stem().string() + ".sav";
+
+    std::ifstream f(save_path, std::ios::binary);
+    if (!f)
+        return;
+    std::vector<uint8_t> saved{std::istreambuf_iterator<char>(f),
+                               std::istreambuf_iterator<char>()};
+    size_t n = std::min(saved.size(), mem->external_ram.size());
+    std::copy_n(saved.begin(), n, mem->external_ram.begin());
+    mem->ram_dirty = false;
+}
+
+void App::save_battery_ram() {
+    if (save_path.empty() || !mem || !mem->ram_dirty || mem->external_ram.empty())
+        return;
+    std::ofstream f(save_path, std::ios::binary | std::ios::trunc);
+    if (!f)
+        return;
+    f.write(reinterpret_cast<const char*>(mem->external_ram.data()),
+            (std::streamsize)mem->external_ram.size());
+    mem->ram_dirty = false;
 }
 
 // the renderer of the games inside the actual emulator
 void App::render_game() {
 #if GB_MOBILE
-    render_game_ios(); // letterboxed layout lives in ios_ui.cpp
+    render_game_mobile(); // letterboxed layout lives in ios_ui.cpp
     return;
 #endif
     uint32_t pixels[144 * 160];
@@ -704,7 +732,7 @@ void App::draw_settings(float w, float h) {
         ImGui::OpenPopup("settings");
     }
 #if GB_DESKTOP
-    // on mobile render_game_ios draws its own back button and never reaches here, without
+    // on mobile render_game_mobile draws its own back button and never reaches here, without
     // the guard the menu frame that load_rom flips to PLAYING draws one at the wrong y
     if (state == AppState::PLAYING && back_button(m + r, m + r, r))
         state = AppState::MENU;
@@ -1122,7 +1150,7 @@ void App::handle_events() {
 #if GB_MOBILE
         // on ios the joypad and the back button are on-screen touch zones
         if (state == AppState::PLAYING)
-            handle_touch_ios(event);
+            handle_touch_mobile(event);
 #endif
 
         if (GB_DESKTOP && state == AppState::PLAYING && !settings_open &&
@@ -1329,7 +1357,7 @@ std::string App::display_name(const std::string& s) {
 
 void App::render_menu() {
 #if GB_MOBILE
-    render_menu_ios();
+    render_menu_mobile();
     return;
 #endif
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);

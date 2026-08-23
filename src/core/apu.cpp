@@ -371,7 +371,7 @@ void Apu::emit_sample() {
     samples.push_back((int16_t)ri);
 }
 
-void Apu::step(uint16_t cycles) {
+void Apu::step(uint8_t cycles) {
     while (cycles--) {
         if (ch1.freq_timer > 0 && --ch1.freq_timer == 0) {
             ch1.freq_timer = (2048 - square_freq(CH1)) * 4;

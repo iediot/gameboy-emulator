@@ -2,10 +2,71 @@
 // Created by edi on 4/22/26.
 //
 
-#include <iostream>
 #include <cstdio>
+#include <iostream>
 #include "memory.h"
 #include "apu.h"
+
+void Memory::set_button(int button, bool pressed) {
+    if (pressed)
+        button_state &= ~(1 << button);
+    else
+        button_state |= (1 << button);
+}
+
+void Memory::step_dma() {
+    if (!dma_active) return;
+    if (++dma_tick < 4) return;
+    dma_tick = 0;
+    if (dma_delay) {
+        dma_delay--; return;
+    }
+    data[0xFE00 + dma_index] = read(dma_source + dma_index);
+    if (++dma_index == 160) dma_active = false;
+}
+
+uint16_t Memory::oam_word(int row, int word) const {
+    uint16_t a = 0xFE00 + row * 8 + word * 2;
+    return (uint16_t)(data[a] | (data[a + 1] << 8));
+}
+
+void Memory::set_oam_word(int row, int word, uint16_t value) {
+    uint16_t a = 0xFE00 + row * 8 + word * 2;
+    data[a] = value & 0xFF;
+    data[a + 1] = value >> 8;
+}
+
+// oam is twenty rows of four words, the row being scanned gets its first word mangled
+// with the row before it and the rest copied straight from it, row 0 is immune
+void Memory::oam_corrupt(int row, bool read) {
+    if (row <= 0 || row > 19)
+        return;
+    uint16_t a = oam_word(row, 0);
+    uint16_t b = oam_word(row - 1, 0);
+    uint16_t c = oam_word(row - 1, 2);
+    set_oam_word(row, 0, read ? (uint16_t)(b | (a & c))
+                              : (uint16_t)(((a ^ c) & (b ^ c)) ^ c));
+    for (int w = 1; w < 4; w++)
+        set_oam_word(row, w, oam_word(row - 1, w));
+}
+
+// a read that happens in the same step as the register increment mangles the preceding
+// row first and smears it over its neighbours, then the ordinary read corruption lands
+void Memory::oam_corrupt_read_inc(int row) {
+    if (row >= 4 && row < 19) {
+        uint16_t a = oam_word(row - 2, 0);
+        uint16_t b = oam_word(row - 1, 0);
+        uint16_t c = oam_word(row, 0);
+        uint16_t d = oam_word(row - 1, 2);
+        set_oam_word(row - 1, 0, (uint16_t)((b & (a | c | d)) | (a & c & d)));
+        for (int w = 0; w < 4; w++) {
+            uint16_t v = oam_word(row - 1, w);
+            set_oam_word(row, w, v);
+            set_oam_word(row - 2, w, v);
+        }
+    }
+    oam_corrupt(row, true);
+}
 
 void Memory::write_mbc1(uint16_t address, uint8_t value) {
     if (address >= 0x0000 && address <= 0x1FFF) {
@@ -60,73 +121,8 @@ void Memory::write_mbc5(uint16_t address, uint8_t value) {
     }
 }
 
-void Memory::set_button(int button, bool pressed) {
-    if (pressed)
-        button_state &= ~(1 << button);
-    else
-        button_state |= (1 << button);
-}
-
 void Memory::sync_div(uint8_t value) {
     data[0xFF04] = value;
-}
-
-uint16_t Memory::oam_word(int row, int word) const {
-    uint16_t a = 0xFE00 + row * 8 + word * 2;
-    return (uint16_t)(data[a] | (data[a + 1] << 8));
-}
-
-void Memory::set_oam_word(int row, int word, uint16_t value) {
-    uint16_t a = 0xFE00 + row * 8 + word * 2;
-    data[a] = value & 0xFF;
-    data[a + 1] = value >> 8;
-}
-
-// oam is twenty rows of four words, the row being scanned gets its first word mangled
-// with the row before it and the rest copied straight from it, row 0 is immune
-void Memory::oam_corrupt(int row, bool read) {
-    if (row <= 0 || row > 19)
-        return;
-    uint16_t a = oam_word(row, 0);
-    uint16_t b = oam_word(row - 1, 0);
-    uint16_t c = oam_word(row - 1, 2);
-    set_oam_word(row, 0, read ? (uint16_t)(b | (a & c))
-                              : (uint16_t)(((a ^ c) & (b ^ c)) ^ c));
-    for (int w = 1; w < 4; w++)
-        set_oam_word(row, w, oam_word(row - 1, w));
-}
-
-// a read that happens in the same step as the register increment mangles the preceding
-// row first and smears it over its neighbours, then the ordinary read corruption lands
-void Memory::oam_corrupt_read_inc(int row) {
-    if (row >= 4 && row < 19) {
-        uint16_t a = oam_word(row - 2, 0);
-        uint16_t b = oam_word(row - 1, 0);
-        uint16_t c = oam_word(row, 0);
-        uint16_t d = oam_word(row - 1, 2);
-        set_oam_word(row - 1, 0, (uint16_t)((b & (a | c | d)) | (a & c & d)));
-        for (int w = 0; w < 4; w++) {
-            uint16_t v = oam_word(row - 1, w);
-            set_oam_word(row, w, v);
-            set_oam_word(row - 2, w, v);
-        }
-    }
-    oam_corrupt(row, true);
-}
-
-void Memory::step_dma() {
-    if (!dma_active) return;
-    if (++dma_tick < 4) return;
-    dma_tick = 0;
-    if (dma_delay) {
-        dma_delay--; return;
-    }
-    data[0xFE00 + dma_index] = read(dma_source + dma_index);
-    if (++dma_index == 160) dma_active = false;
-}
-
-uint8_t Memory::ppu_read(uint16_t address) const {
-    return data[address];
 }
 
 uint8_t Memory::read(uint16_t address) {
@@ -212,6 +208,10 @@ uint8_t Memory::read(uint16_t address) {
     return data[address];
 }
 
+uint8_t Memory::ppu_read(uint16_t address) const {
+    return data[address];
+}
+
 void Memory::write(uint16_t address, uint8_t value) {
     if (apu != nullptr && address >= 0xFF10 && address <= 0xFF3F) {
                 apu->write(address, value);
@@ -244,6 +244,7 @@ void Memory::write(uint16_t address, uint8_t value) {
         size_t offset = bank * 0x2000 + (address - 0xA000);
         offset %= external_ram.size();
         external_ram[offset] = value;
+        ram_dirty = true;
         return;
     }
 
@@ -291,7 +292,7 @@ void Memory::write(uint16_t address, uint8_t value) {
         serial_buffer.push_back(static_cast<char>(value));
 }
 
-void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
+void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
     rom = rom_to_load;
     mbc = rom[0x0147];
     uint8_t ram_size = rom[0x0149]; // ram size code
@@ -303,6 +304,27 @@ void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
         case 3: external_ram.resize(32 * 1024); break; // 4 banks
         case 4: external_ram.resize(128 * 1024); break; // 16 banks
         case 5: external_ram.resize(64 * 1024); break; // 8 banks
+    }
+
+    // cartridge types that back their ram with a battery, these are the ones worth
+    // writing out to a .sav
+    switch (mbc) {
+        case 0x03:
+        case 0x06:
+        case 0x09:
+        case 0x0D:
+        case 0x0F:
+        case 0x10:
+        case 0x13:
+        case 0x1B:
+        case 0x1E:
+        case 0x22:
+        case 0xFF:
+            has_battery = true;
+            break;
+        default:
+            has_battery = false;
+            break;
     }
 
     if (mbc == 0x00)
@@ -323,7 +345,7 @@ void Memory::loadRom(const std::vector<uint8_t>& rom_to_load) {
     data[0xFF07] = 0xF8; // TAC
     data[0xFF0F] = 0xE1; // IF
     data[0xFF40] = 0x91; // LCDC
-    
+
     data[0xFF41] = 0x85; // STAT
     data[0xFF46] = 0xFF; // DMA
     data[0xFF47] = 0xFC; // BGP

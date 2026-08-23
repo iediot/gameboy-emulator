@@ -8,8 +8,7 @@
 #include <cstdint>
 #include "memory.h"
 
-class Ppu
-{
+class Ppu {
 private:
     Memory& mem;
     // helper for our draw method

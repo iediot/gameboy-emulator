@@ -2,9 +2,8 @@
 // Created by edi on 5/10/26.
 //
 
-#include "ppu.h"
-
 #include <algorithm>
+#include "ppu.h"
 
 Ppu::Ppu(Memory& memory) : mem(memory) {}
 

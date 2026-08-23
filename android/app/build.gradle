@@ -59,7 +59,7 @@ android {
 def stageGbAssets = tasks.register('stageGbAssets', Copy) {
     into stagedAssets
     from(new File(repoRoot, 'assets/sprites')) {
-        include 'emu-sprite.png', 'cartridge.png'
+        include 'cartridge.png'
     }
     from(new File(repoRoot, 'assets/artworks')) {
         into 'artworks'

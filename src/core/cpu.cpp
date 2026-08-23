@@ -349,7 +349,7 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
                     bit_position = 9;
                     break;
                 }
-            case 0x01:  {
+            case 0x01: {
                     bit_position = 3;
                     break;
                 }

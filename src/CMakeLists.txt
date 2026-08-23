@@ -25,8 +25,7 @@ if(GB_ANDROID)
     target_link_libraries(gameboy_emu PRIVATE GLESv2 log android)
 elseif(GB_IOS)
     # roms, covers and the bezel are staged into the app bundle, read back at runtime via SDL_GetBasePath
-    set(GB_RESOURCES ${GB_ASSETS_DIR}/sprites/emu-sprite.png
-            ${GB_ASSETS_DIR}/sprites/cartridge.png
+    set(GB_RESOURCES ${GB_ASSETS_DIR}/sprites/cartridge.png
             ${GB_ASSETS_DIR}/artworks
             ${GB_ROMS_DIR}/game-roms)
 

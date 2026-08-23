@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <string>
 #include <filesystem>
+#include <string>
 #include "app.h"
 #include "glass.h"
 #include "imgui.h"
@@ -184,7 +184,7 @@ namespace {
 }
 
 // draws the running game, the lcd sits up top with the joypad drawn beneath it
-void App::render_game_ios() {
+void App::render_game_mobile() {
     // convert the framebuffer to argb, same olive palette as the desktop path
     uint32_t pixels[144 * 160];
     for (int y = 0; y < 144; y++)
@@ -270,7 +270,7 @@ void App::render_game_ios() {
 }
 
 // swipe carousel, one big cover framed at a time with arrows, a title and a play button
-void App::render_menu_ios() {
+void App::render_menu_mobile() {
     // a finished import drops a new rom into the folder, pick it up before drawing
     if (gb_take_import_done()) {
         scan_roms();
@@ -580,7 +580,7 @@ void App::render_menu_ios() {
 }
 
 // turns finger touches into joypad presses and drives the back button, supports several fingers at once
-void App::handle_touch_ios(const SDL_Event& event) {
+void App::handle_touch_mobile(const SDL_Event& event) {
     if (event.type != SDL_FINGERDOWN && event.type != SDL_FINGERUP && event.type != SDL_FINGERMOTION)
         return;
 

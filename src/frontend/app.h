@@ -5,10 +5,10 @@
 #ifndef GAMEBOY_EMU_APP_H
 #define GAMEBOY_EMU_APP_H
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
-#include <map>
 #include "platform.h"
 #include "core/memory.h"
 #include "core/cpu.h"
@@ -31,8 +31,7 @@ inline constexpr double      kGbFps       = 59.7275;
 
 enum class ScaleMode { NORMAL, CROP, STRETCH };
 
-class App
-{
+class App {
 private:
     // private members
     SDL_Window* window = nullptr;
@@ -40,7 +39,6 @@ private:
     SDL_Texture* texture = nullptr;
     SDL_AudioDeviceID audio_device;
     float volume = 0.7f;
-    SDL_Texture* gameboy_sprite;
     SDL_Texture* cartridge_sprite;
     SDL_Texture* cartridge_shadow;
     SDL_Texture* rect_shadow;
@@ -57,12 +55,13 @@ private:
     int selected_rom;
     std::string rom_folder;      // where .gb files are read from
     std::string artwork_folder;  // where cover art .png files live
-    std::string sprite_path;     // the gameboy bezel sprite
     std::string cartridge_path;  // the cartridge shell the covers sit in
     std::string icon_light_path; // window icon for a light system theme
     std::string icon_dark_path;  // window icon for a dark system theme
     bool bundled = false;        // running from a .app, the system owns the icon then
-    std::string settings_path;   // where the scale mode, frame cap and keybinds are stored
+    std::string settings_path;
+    int battery_flush = 0;
+    std::string save_path;       // the loaded cartridge's .sav, empty if it has no battery
 
     int carousel_index = 0;
     float carousel_pos = 0.0f;
@@ -104,6 +103,8 @@ private:
     void save_settings();
     void scan_roms();
     void load_rom(const std::string& name);
+    void load_battery_ram(const std::string& name);
+    void save_battery_ram();
     void add_game();
     void render_game();
     void handle_events();
@@ -123,9 +124,9 @@ private:
     void draw_settings(float w, float h);
 #if GB_MOBILE
     // ios-only layout and touch input, implemented in ios_ui.cpp
-    void render_menu_ios();
-    void render_game_ios();
-    void handle_touch_ios(const SDL_Event& event);
+    void render_menu_mobile();
+    void render_game_mobile();
+    void handle_touch_mobile(const SDL_Event& event);
 #endif
 public:
     // constructor

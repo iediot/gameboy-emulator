@@ -4,10 +4,11 @@
 
 #ifndef GAMEBOY_EMU_MEMORY_H
 #define GAMEBOY_EMU_MEMORY_H
-#include <array>
+
 #include <cstdint>
-#include <vector>
+#include <array>
 #include <string>
+#include <vector>
 
 enum class MbcType {
     NONE,
@@ -27,9 +28,7 @@ public:
     Apu* apu = nullptr;
     bool div_reset = false;
 
-    // state for the input buttons
     uint8_t button_state = 0xFF;
-    // method to set the state of the button
     void set_button(int button, bool pressed);
 
     std::string serial_buffer;
@@ -42,6 +41,8 @@ public:
 
     std::vector<uint8_t> external_ram;
     bool ram_enabled = false;
+    bool has_battery = false;
+    bool ram_dirty = false;
     uint8_t ram_bank = 0;
 
     uint8_t mbc = 0;
@@ -68,8 +69,7 @@ public:
     // the ppu has its own path to vram and oam, the cpu facing blocking does not apply
     uint8_t ppu_read(uint16_t address) const;
     void write(uint16_t address, uint8_t value);
-    void loadRom(const std::vector<uint8_t>& rom_to_load);
-    uint8_t read_raw(uint16_t address) { return data[address]; }
+    void load_rom(const std::vector<uint8_t>& rom_to_load);
 };
 
 #endif //GAMEBOY_EMU_MEMORY_H
