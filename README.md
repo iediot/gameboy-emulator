@@ -31,11 +31,12 @@ unchanged for iOS and Android.
 | Component | Status |
 |---|---|
 | **CPU** | Full Sharp LR35902 set — 256 base + 256 CB-prefixed opcodes, M-cycle accurate, with the EI 1-instruction delay and the HALT bug |
-| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts |
+| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, and the DMG OAM corruption bug |
+| **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning |
 | **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection |
 | **Interrupts** | VBlank, STAT, Timer and Joypad with correct dispatch timing and IME semantics |
 | **DMA** | OAM transfer via `$FF46`, cycle-stepped against the CPU |
-| **Cartridges** | MBC1, MBC3 and MBC5 bank switching with external RAM |
+| **Cartridges** | MBC1, MBC3 and MBC5 bank switching, with battery-backed RAM saved to `.sav` |
 | **Boot** | Post-boot register and I/O state, so games start without a boot ROM |
 
 ### Test ROMs
@@ -44,6 +45,10 @@ unchanged for iOS and Android.
 |---|---|
 | Blargg `cpu_instrs` | 11 / 11 |
 | Blargg `instr_timing` | pass |
+| Blargg `mem_timing` | 3 / 3 |
+| Blargg `mem_timing-2` | 3 / 3 |
+| Blargg `dmg_sound` | 9 / 12 — the three wave RAM access-timing tests fail |
+| Blargg `oam_bug` | 6 / 8 |
 | dmg-acid2 | pixel-perfect |
 | Mooneye timing (`call`, `push`, `rst`, `ei`, `intr`, `tima_reload`) | pass |
 | Mooneye `intr_2_mode0_timing` | fails — needs sub-scanline PPU mode timing |
@@ -54,9 +59,9 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 ## Frontend
 
 - **Cartridge carousel** — each game's box art is composited into a Game Boy cartridge shell, with real blurred drop shadows and momentum scrolling.
-- **Settings** — screen fit (normal / crop / stretch), menu frame cap up to unlimited, VSync, HiDPI rendering, cartridge rendering toggle.
+- **Settings** — display, audio and keybind tabs: screen fit (normal / crop / stretch), menu frame cap up to unlimited, VSync, HiDPI rendering, cartridge rendering toggle and master volume.
 - **Rebindable keys** — every button remappable from the UI.
-- **Persistence** — settings, keybinds, window size and window position are restored on launch.
+- **Persistence** — settings, keybinds, window size and window position are restored on launch, and battery-backed cartridges keep their saves.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
 - **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android.
 - **Native packaging** — a real macOS `.app` bundle with light/dark app icons, plus iOS and Android apps that share one touch layout, each with its own native icon.
@@ -126,8 +131,9 @@ Defaults — all rebindable in **Settings → Keybinds**.
 | Select | `Backspace` |
 | Back to menu | `Esc` |
 
-On iOS and Android the d-pad and buttons are drawn as touch zones over the Game Boy
-bezel, tracked per finger so combinations work.
+On iOS and Android the d-pad, A, B, Start and Select are drawn from scratch rather than
+overlaid on a bezel image, laid out from the screen size and tracked per finger so
+combinations work.
 
 ## Where things live
 
@@ -136,8 +142,8 @@ copied there:
 
 ```
 ~/Library/Application Support/com.iediot/gbemu/
-├── game-roms/      # .gb files
-└── settings.txt    # scale, frame cap, vsync, hidpi, window geometry, keybinds
+├── game-roms/      # .gb files, and a .sav beside each battery-backed cartridge
+└── settings.txt    # scale, frame cap, vsync, hidpi, volume, window geometry, keybinds
 ```
 
 Cover art is matched to a ROM by fuzzy name comparison against `assets/artworks/`, so
@@ -148,8 +154,8 @@ read-only inside the APK and the ROMs are seeded into internal storage on first 
 
 ## Roadmap
 
-- [ ] APU — audio is the big missing piece
-- [ ] Battery-backed saves written to `.sav`
+- [x] APU — all four channels
+- [x] Battery-backed saves written to `.sav`
 - [ ] Save states
 - [ ] Sub-scanline PPU timing (mid-scanline register writes, `intr_2_mode0_timing`)
 - [ ] Adjustable game speed / fast-forward

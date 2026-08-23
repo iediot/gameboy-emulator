@@ -39,7 +39,10 @@ elseif(GB_IOS)
 
     target_link_libraries(gameboy_emu PRIVATE "-framework UIKit")
 
+    # xcode builds a debug configuration at -O0, which cannot emulate at full speed on a
+    # phone, so the debug build is optimised too and only keeps its symbols
     set_target_properties(gameboy_emu PROPERTIES
+            "XCODE_ATTRIBUTE_GCC_OPTIMIZATION_LEVEL[variant=Debug]" "2"
             MACOSX_BUNDLE_INFO_PLIST ${GB_ROOT_DIR}/ios/Info.plist
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.iediot.gbemu"
             XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"

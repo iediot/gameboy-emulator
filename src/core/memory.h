@@ -66,9 +66,10 @@ public:
     void write_mbc5(uint16_t address, uint8_t value);
     void sync_div(uint8_t value);
     uint8_t read(uint16_t address);
-    // the ppu has its own path to vram and oam, the cpu facing blocking does not apply
-    uint8_t ppu_read(uint16_t address) const;
     void write(uint16_t address, uint8_t value);
+    // the ppu and the timer own these registers, they do not go through the cpu bus
+    uint8_t read_direct(uint16_t address) const { return data[address]; }
+    void write_direct(uint16_t address, uint8_t value) { data[address] = value; }
     void load_rom(const std::vector<uint8_t>& rom_to_load);
 };
 

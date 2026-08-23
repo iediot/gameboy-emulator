@@ -7,19 +7,19 @@
 
 Ppu::Ppu(Memory& memory) : mem(memory) {}
 
-uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base) {
+uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc) {
     // find the tile in the 32x32 map which it covers
     uint8_t tile_col = x / 8;
     uint8_t tile_row = y / 8;
 
     uint16_t map_address = map_base + tile_row * 32 + tile_col;
-    uint8_t tile_index = mem.ppu_read(map_address);
+    uint8_t tile_index = mem.read_direct(map_address);
 
     // find the tile's pixel data in VRAM
     uint16_t tile_address;
 
     // check if bit 4 is 0
-    if (mem.read(LCDC_ADDR) & 0x10)
+    if (lcdc & 0x10)
         tile_address = 0x8000 + tile_index * 16;
     else
         tile_address = 0x9000 + (int8_t)tile_index * 16;
@@ -27,8 +27,8 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base) {
     // row of pixel data
     uint8_t pixel_row = y % 8;
     uint16_t row_address = tile_address + pixel_row * 2;
-    uint8_t byte_low = mem.ppu_read(row_address);
-    uint8_t byte_high = mem.ppu_read(row_address + 1);
+    uint8_t byte_low = mem.read_direct(row_address);
+    uint8_t byte_high = mem.read_direct(row_address + 1);
 
     // 2-bit color id
     uint8_t pixel_col = x % 8;
@@ -48,10 +48,11 @@ void Ppu::draw_sprite() {
         uint8_t row;
         uint8_t oam_index;
     };
-    std::vector<sprite_vars> scanline_sprites;
+    sprite_vars scanline_sprites[10];
+    int sprite_count = 0;
 
-    uint8_t LCDC = mem.read(LCDC_ADDR);
-    uint8_t LY = mem.read(LY_ADDR);
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
+    uint8_t LY = mem.read_direct(LY_ADDR);
 
     if (!(LCDC & 0x02))
         return;
@@ -62,10 +63,10 @@ void Ppu::draw_sprite() {
 
     for (int i = 0; i < 40; i++) {
         // we use int here to avoid underflow
-        int y = mem.ppu_read(0xFE00 + i*4) - 16;
-        uint8_t x = mem.ppu_read(0xFE00 + i*4 + 1);
-        uint8_t tile_index = mem.ppu_read(0xFE00 + i*4 + 2);
-        uint8_t flags = mem.ppu_read(0xFE00 + i*4 + 3);
+        int y = mem.read_direct(0xFE00 + i*4) - 16;
+        uint8_t x = mem.read_direct(0xFE00 + i*4 + 1);
+        uint8_t tile_index = mem.read_direct(0xFE00 + i*4 + 2);
+        uint8_t flags = mem.read_direct(0xFE00 + i*4 + 3);
 
         // scanline filter
         if (LY < y || LY >= (y + sprite_height))
@@ -77,16 +78,18 @@ void Ppu::draw_sprite() {
 
         int row = LY - y;
 
-        scanline_sprites.push_back({x, tile_index, flags, (uint8_t)row, (uint8_t)i});
+        scanline_sprites[sprite_count++] = {x, tile_index, flags, (uint8_t)row, (uint8_t)i};
     }
 
     // sort by x descending, and for ties earlier oam index wins
-    std::ranges::stable_sort(scanline_sprites, [](const auto& a, const auto& b){
+    std::stable_sort(scanline_sprites, scanline_sprites + sprite_count,
+                     [](const sprite_vars& a, const sprite_vars& b) {
         if (a.x != b.x) return a.x > b.x;
         return a.oam_index > b.oam_index;
     });
 
-    for (const auto& sprite : scanline_sprites) {
+    for (int s = 0; s < sprite_count; s++) {
+        const sprite_vars& sprite = scanline_sprites[s];
         // unpack the fields into local vars
         uint8_t x = sprite.x;
         uint8_t tile_index = sprite.tile_index;
@@ -100,8 +103,8 @@ void Ppu::draw_sprite() {
             row = (sprite_height - 1) - row;
 
         uint16_t row_address = 0x8000 + tile_index * 16 + row * 2;
-        uint8_t low_byte = mem.ppu_read(row_address);
-        uint8_t high_byte = mem.ppu_read(row_address + 1);
+        uint8_t low_byte = mem.read_direct(row_address);
+        uint8_t high_byte = mem.read_direct(row_address + 1);
 
         for (int c = 0; c < 8; c++)
         {
@@ -131,9 +134,9 @@ void Ppu::draw_sprite() {
             respective palette, OBP0 OR OBP1 */
             uint8_t palette;
             if (flags & 0x10)
-                palette = mem.read(OBP1_ADDR);
+                palette = mem.read_direct(OBP1_ADDR);
             else
-                palette = mem.read(OBP0_ADDR);
+                palette = mem.read_direct(OBP0_ADDR);
 
             // calculate the final color the same way as before
             uint8_t final_color = palette >> (color_id * 2) & 0x03;
@@ -148,10 +151,10 @@ void Ppu::draw_sprite() {
 
 void Ppu::draw_scanline() {
     // read line registers
-    uint8_t SCY = mem.read(SCY_ADDR);
-    uint8_t SCX = mem.read(SCX_ADDR);
-    uint8_t LY = mem.read(LY_ADDR);
-    uint8_t LCDC = mem.read(LCDC_ADDR);
+    uint8_t SCY = mem.read_direct(SCY_ADDR);
+    uint8_t SCX = mem.read_direct(SCX_ADDR);
+    uint8_t LY = mem.read_direct(LY_ADDR);
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
 
     // bg off - white and bg counts as colour 0
     if (!(LCDC & 0x01)) {
@@ -163,24 +166,14 @@ void Ppu::draw_scanline() {
         return;
     }
 
+    uint8_t bgp_value = mem.read_direct(BGP_ADDR);
+    uint16_t map_base = (LCDC & 0x08) ? 0x9C00 : 0x9800;
+
     for (int x = 0; x <= 159; x++) {
-        // compute the background coordinates
         uint8_t bg_y = SCY + LY;
         uint8_t bg_x = SCX + x;
 
-        // look up the tile index in the tile map
-        uint16_t map_base;
-
-        // check if bit 3 is 0
-        if (LCDC & 0x08)
-            map_base = 0x9C00;
-        else
-            map_base = 0x9800;
-
-        uint8_t color_id = fetch_color_id(bg_x, bg_y, map_base);
-
-        // apply the BGP palette to get the shade
-        uint8_t bgp_value = mem.read(BGP_ADDR);
+        uint8_t color_id = fetch_color_id(bg_x, bg_y, map_base, LCDC);
         uint8_t final_color = bgp_value >> (color_id * 2) & 0x03;
 
         // put the color id into this array to keep track of drawn tiles
@@ -188,8 +181,8 @@ void Ppu::draw_scanline() {
         framebuffer[LY][x] = final_color;
     }
 
-    uint8_t WY = mem.read(WY_ADDR);
-    uint8_t WX = mem.read(WX_ADDR);
+    uint8_t WY = mem.read_direct(WY_ADDR);
+    uint8_t WX = mem.read_direct(WX_ADDR);
 
     /* check if bit 5 is set or if the window
      layer position is out of bounds */
@@ -206,10 +199,7 @@ void Ppu::draw_scanline() {
                 continue;
             uint8_t win_x = x - (WX - 7);
 
-            uint8_t color_id = fetch_color_id(win_x, win_y, window_tile_map);
-
-            // apply the BGP palette to get the shade
-            uint8_t bgp_value = mem.read(BGP_ADDR);
+            uint8_t color_id = fetch_color_id(win_x, win_y, window_tile_map, LCDC);
             uint8_t final_color = bgp_value >> (color_id * 2) & 0x03;
 
             // put the color id into this array to keep track of drawn tiles
@@ -224,13 +214,19 @@ void Ppu::draw_scanline() {
 }
 
 void Ppu::step(uint8_t cycles) {
-    if (!(mem.read(LCDC_ADDR) & 0x80)) {
+    if (!(mem.read_direct(LCDC_ADDR) & 0x80)) {
         scanline_cycles = 0;
-        mem.write(LY_ADDR, 0);
-        mem.write(STAT_ADDR, mem.read(STAT_ADDR) & 0xFC);
+        mem.write_direct(LY_ADDR, 0);
+        mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & 0xFC);
         window_line_counter = 0;
         stat_line = false;
         prev_mode = 0;
+        // the panel goes blank with the lcd, holding the last frame instead shows
+        // whatever vram happened to contain while a game uploads with it switched off
+        if (lcd_was_on)
+            for (int y = 0; y < 144; y++)
+                for (int x = 0; x < 160; x++)
+                    framebuffer[y][x] = 0;
         lcd_was_on = false;
         return;
     }
@@ -247,29 +243,29 @@ void Ppu::step(uint8_t cycles) {
 
     if (scanline_cycles >= 456) {
         scanline_cycles -= 456;
-        mem.write(LY_ADDR, mem.read(LY_ADDR) + 1); // LY increment
+        mem.write_direct(LY_ADDR, mem.read_direct(LY_ADDR) + 1); // LY increment
 
         // set bit 2 of STAT if LY == LYC
-        if (mem.read(LY_ADDR) == mem.read(LYC_ADDR))
-            mem.write(STAT_ADDR, mem.read(STAT_ADDR) | 0x04);
+        if (mem.read_direct(LY_ADDR) == mem.read_direct(LYC_ADDR))
+            mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) | 0x04);
         // if LY != LYC clear bit 2 of STAT
-        if (mem.read(LY_ADDR) != mem.read(LYC_ADDR))
-            mem.write(STAT_ADDR, mem.read(STAT_ADDR) & ~0x04);
+        if (mem.read_direct(LY_ADDR) != mem.read_direct(LYC_ADDR))
+            mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & ~0x04);
 
-        if (mem.read(LY_ADDR) >= 154) { // check LY if over 154
-            mem.write(LY_ADDR, 0); // reset to 0 if true
+        if (mem.read_direct(LY_ADDR) >= 154) { // check LY if over 154
+            mem.write_direct(LY_ADDR, 0); // reset to 0 if true
             window_line_counter = 0; // also reset the window counter
         }
-        if (mem.read(LY_ADDR) == 144) {
-            mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x01);
+        if (mem.read_direct(LY_ADDR) == 144) {
+            mem.write_direct(IF_ADDR, mem.read_direct(IF_ADDR) | 0x01);
             frame_ready = true;
         }
     }
 
     if (scanline_cycles == 80)
-        mode3_extra = mem.read(SCX_ADDR) & 7;
+        mode3_extra = mem.read_direct(SCX_ADDR) & 7;
 
-    if (mem.read(LY_ADDR) >= 144) { // mode 1 - VBlank
+    if (mem.read_direct(LY_ADDR) >= 144) { // mode 1 - VBlank
         mode = 1;
     } else if (scanline_cycles < 80) { // mode 2 - OAM scan
         mode = 2;
@@ -279,8 +275,8 @@ void Ppu::step(uint8_t cycles) {
         mode = 0;
     }
 
-    uint8_t STAT = mem.read(STAT_ADDR);
-    bool coincidence = mem.read(LY_ADDR) == mem.read(LYC_ADDR);
+    uint8_t STAT = mem.read_direct(STAT_ADDR);
+    bool coincidence = mem.read_direct(LY_ADDR) == mem.read_direct(LYC_ADDR);
 
     bool line = (mode == 0 && (STAT & 0x08))
              || (mode == 1 && (STAT & 0x10))
@@ -288,12 +284,12 @@ void Ppu::step(uint8_t cycles) {
              || (coincidence && (STAT & 0x40));
 
     if (line && !stat_line)
-        mem.write(IF_ADDR, mem.read(IF_ADDR) | 0x02);
+        mem.write_direct(IF_ADDR, mem.read_direct(IF_ADDR) | 0x02);
     stat_line = line;
 
-    mem.write(STAT_ADDR, (mem.read(STAT_ADDR) & 0xFC) | mode);
+    mem.write_direct(STAT_ADDR, (mem.read_direct(STAT_ADDR) & 0xFC) | mode);
 
-    if (mode == 0 && prev_mode != 0 && mem.read(LY_ADDR) < 144)
+    if (mode == 0 && prev_mode != 0 && mem.read_direct(LY_ADDR) < 144)
         draw_scanline();
 
     prev_mode = mode;

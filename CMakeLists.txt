@@ -6,6 +6,11 @@ project(gameboy_emu CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# an unoptimised build cannot keep up with the console it is emulating
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
 # ios is selected with -DCMAKE_SYSTEM_NAME=iOS, android comes from the ndk toolchain
 # gradle passes in, everything else is desktop
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")

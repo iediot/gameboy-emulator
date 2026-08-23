@@ -340,7 +340,7 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         }
         internal_div++;
         mem.sync_div(internal_div >> 8);
-        uint8_t TAC = mem.read(0xFF07);
+        uint8_t TAC = mem.read_direct(0xFF07);
         bool timer_enable = TAC & 0x04;
         uint8_t clock_select = TAC & 0x03;
         uint8_t bit_position;

@@ -43,6 +43,15 @@ android {
     }
 
     buildTypes {
+        debug {
+            // the ndk defaults a debug variant to -O0, which is far too slow to emulate
+            // at full speed on a phone, keep the symbols but optimise
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+                }
+            }
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

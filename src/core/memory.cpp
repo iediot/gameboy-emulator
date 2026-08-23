@@ -208,10 +208,6 @@ uint8_t Memory::read(uint16_t address) {
     return data[address];
 }
 
-uint8_t Memory::ppu_read(uint16_t address) const {
-    return data[address];
-}
-
 void Memory::write(uint16_t address, uint8_t value) {
     if (apu != nullptr && address >= 0xFF10 && address <= 0xFF3F) {
                 apu->write(address, value);
