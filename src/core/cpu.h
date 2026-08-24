@@ -46,7 +46,7 @@ public:
     uint64_t total_cycles = 0;
 
     // Timer
-    uint16_t internal_div = 0xABCC;
+    uint16_t internal_div = 0xABCB; // post-boot 0xABCC, less one because tick advances it before use
     bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
     bool last_apu_bit = false;    // bit 12 of internal_div from last t-cycle, clocks the frame sequencer
     uint8_t tima_reload_delay = 0;

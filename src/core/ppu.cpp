@@ -39,6 +39,52 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcd
     return color_id;
 }
 
+// mode 3 runs 172 dots plus the fine scroll, plus a penalty for every object on the line
+// and one for the window, all of which push back the moment hblank starts
+uint16_t Ppu::mode3_length_extra() {
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
+    uint8_t SCX  = mem.read_direct(SCX_ADDR);
+    uint8_t LY   = mem.read_direct(LY_ADDR);
+
+    uint16_t extra = SCX & 7;
+
+    if (LCDC & 0x02) {
+        uint8_t height = (LCDC & 0x04) ? 16 : 8;
+        uint8_t xs[10];
+        int count = 0;
+        for (int i = 0; i < 40 && count < 10; i++) {
+            int y = mem.read_direct(0xFE00 + i * 4) - 16;
+            if (LY < y || LY >= y + height)
+                continue;
+            xs[count++] = mem.read_direct(0xFE00 + i * 4 + 1);
+        }
+        // objects are handled left to right, and only the first to land in a background
+        // tile pays that tile's share
+        std::sort(xs, xs + count);
+
+        bool tile_done[33] = {};
+        for (int i = 0; i < count; i++) {
+            if (xs[i] == 0) {          // wholly off the left edge, always a flat 11
+                extra += 11;
+                continue;
+            }
+            int pixel = (int)SCX + (int)xs[i] - 8;
+            int tile = (pixel >> 3) & 31;
+            if (!tile_done[tile]) {
+                tile_done[tile] = true;
+                int right_of = 7 - (pixel & 7);
+                if (right_of > 2) extra += right_of - 2;
+            }
+            extra += 6;
+        }
+    }
+
+    if ((LCDC & 0x20) && LY >= mem.read_direct(WY_ADDR) && mem.read_direct(WX_ADDR) <= 166)
+        extra += 6;
+
+    return extra;
+}
+
 void Ppu::draw_sprite() {
     // sprites need to be drawn after sorting to be just the way gameboy logic draws them
     struct sprite_vars {
@@ -266,14 +312,18 @@ void Ppu::step(uint8_t cycles) {
     else
         mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & ~0x04);
 
-    if (scanline_cycles == 80)
-        mode3_extra = mem.read_direct(SCX_ADDR) & 7;
+    // scanline_cycles is advanced before the mode is evaluated, so a line's first
+    // evaluation reads 1 rather than 0 and every boundary sits one past its dot number
+    constexpr uint16_t kDotBias = 1;
+
+    if (scanline_cycles == 80 + kDotBias)
+        mode3_extra = mode3_length_extra();
 
     if (ly_counter >= 144) { // mode 1 - VBlank
         mode = 1;
-    } else if (scanline_cycles < 80) { // mode 2 - OAM scan
+    } else if (scanline_cycles < 80 + kDotBias) { // mode 2 - OAM scan
         mode = 2;
-    } else if (scanline_cycles < 252 + mode3_extra) { // mode 3 - Drawing
+    } else if (scanline_cycles < 252 + mode3_extra + kDotBias) { // mode 3 - Drawing
         mode = 3;
     } else { // mode 0 - HBlank
         mode = 0;

@@ -34,6 +34,16 @@ enum {
     NR50 = 0x14, NR51 = 0x15
 };
 
+// the boot rom leaves a few sound registers set, and channel 1's dac switched on
+Apu::Apu() {
+    registers[CH1 + 1] = 0x80;   // NR11, duty 2
+    registers[CH1 + 2] = 0xF3;   // NR12, volume 15 with a decreasing envelope
+    registers[NR50]    = 0x77;
+    registers[NR51]    = 0xF3;
+    ch1.dac_on = true;
+    ch1.enabled = true;          // the boot rom's jingle leaves channel 1 running
+}
+
 uint8_t Apu::read(uint16_t address) {
     if (address >= 0xFF30) {
         // while channel 3 runs, a dmg only lets the cpu see the byte the channel is on,

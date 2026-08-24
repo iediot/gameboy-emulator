@@ -125,6 +125,23 @@ void Memory::sync_div(uint8_t value) {
     data[0xFF04] = value;
 }
 
+// bits an io register does not implement read back as 1, and the whole of the io block
+// that the dmg leaves unmapped reads 0xFF
+static uint8_t io_read_mask(uint16_t address) {
+    switch (address) {
+        case 0xFF00: return 0xC0;   // P1, the two top bits are not wired
+        case 0xFF01: return 0x00;   // SB
+        case 0xFF02: return 0x7E;   // SC, only transfer start and clock select exist
+        case 0xFF07: return 0xF8;   // TAC
+        case 0xFF0F: return 0xE0;   // IF
+        case 0xFF41: return 0x80;   // STAT
+        default: break;
+    }
+    if (address >= 0xFF04 && address <= 0xFF06) return 0x00;
+    if (address >= 0xFF40 && address <= 0xFF4B) return 0x00;
+    return 0xFF;
+}
+
 uint8_t Memory::read(uint16_t address) {
     if (apu != nullptr && address >= 0xFF10 && address <= 0xFF3F) {
                 return apu->read(address);
@@ -205,6 +222,9 @@ uint8_t Memory::read(uint16_t address) {
     if (lcd_on && mode >= 2  && address >= 0xFE00 && address <= 0xFE9F)
         return 0xFF;
 
+    if (address >= 0xFF00 && address <= 0xFF7F)
+        return data[address] | io_read_mask(address);
+
     return data[address];
 }
 
@@ -282,6 +302,9 @@ void Memory::write(uint16_t address, uint8_t value) {
         return;
 
     data[address] = value;
+
+    if (address == 0xFF05)
+        tima_written = true;
 
     // serial output, test roms print their results through it
     if (address == 0xFF01)

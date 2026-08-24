@@ -13,6 +13,7 @@ private:
     Memory& mem;
     // helper for our draw method
     uint8_t fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc);
+    uint16_t mode3_length_extra();
 public:
     // very used memory addresses
     static constexpr uint16_t IF_ADDR = 0xFF0F;
@@ -46,7 +47,7 @@ public:
 
     bool stat_line = false;
 
-    uint8_t mode3_extra = 0;
+    uint16_t mode3_extra = 0;
 
     // the draw functions
     void draw_sprite();

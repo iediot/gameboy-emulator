@@ -364,17 +364,26 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         }
         bool selected_bit = (internal_div >> bit_position) & 1;
         bool and_result = selected_bit && timer_enable;
+        // a write to TIMA while it is waiting to reload throws the reload away and
+        // keeps whatever was written
+        if (mem.tima_written) {
+            mem.tima_written = false;
+            tima_reload_delay = 0;
+        }
+
+        // the timer owns these registers, going through the bus would look like a cpu
+        // write and cancel the very reload it is performing
         if (tima_reload_delay > 0 && --tima_reload_delay == 0) {
-            mem.write(0xFF05, mem.read(0xFF06));         // TIMA = TMA
-            mem.write(0xFF0F, mem.read(0xFF0F) | 0x04);  // request timer IRQ
+            mem.write_direct(0xFF05, mem.read_direct(0xFF06));                // TIMA = TMA
+            mem.write_direct(0xFF0F, mem.read_direct(0xFF0F) | 0x04);         // timer IRQ
         }
 
         if (last_and_result && !and_result) {
-            if (mem.read(0xFF05) == 0xFF) {
-                mem.write(0xFF05, 0x00);   // reads as 00 during the delay
+            if (mem.read_direct(0xFF05) == 0xFF) {
+                mem.write_direct(0xFF05, 0x00);   // reads as 00 during the delay
                 tima_reload_delay = 4;
             } else {
-                mem.write(0xFF05, mem.read(0xFF05) + 1);
+                mem.write_direct(0xFF05, mem.read_direct(0xFF05) + 1);
             }
         }
         last_and_result = and_result;

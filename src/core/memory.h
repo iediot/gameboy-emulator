@@ -27,6 +27,7 @@ private:
 public:
     Apu* apu = nullptr;
     bool div_reset = false;
+    bool tima_written = false;  // a write during the reload delay cancels it
 
     uint8_t button_state = 0xFF;
     void set_button(int button, bool pressed);

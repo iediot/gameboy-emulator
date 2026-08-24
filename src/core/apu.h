@@ -92,6 +92,8 @@ private:
     void mix_cycle();
     void emit_sample();
 public:
+    Apu();
+
     std::vector<int16_t> samples;
     uint8_t read(uint16_t address);
     void write(uint16_t address, uint8_t value);
