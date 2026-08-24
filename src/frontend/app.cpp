@@ -398,6 +398,28 @@ void App::load_settings() {
             int v; if (f >> v) render_cartridge = (v != 0);
         } else if (key == "volume") {
             float v; if (f >> v && v >= 0.0f && v <= 1.0f) volume = v;
+        } else if (key == "joystick") {
+            int v;
+            if (f >> v) {
+#if GB_MOBILE
+                joystick_mode = (v != 0);
+#endif
+            }
+        } else if (key == "snap") {
+            int v;
+            if (f >> v) {
+#if GB_MOBILE
+                snap_enabled = (v != 0);
+#endif
+            }
+        } else if (key == "control") {
+            int i; float x, y, sc;
+            if (f >> i >> x >> y >> sc && i >= 0 && i < CTRL_COUNT) {
+#if GB_MOBILE
+                controls[i] = {x, y, sc};
+                layout_custom = true;
+#endif
+            }
         } else if (key == "window") {
             int ww, wh;
             if (f >> ww >> wh && ww >= 480 && wh >= 360 && ww <= 16384 && wh <= 16384) {
@@ -430,6 +452,14 @@ void App::save_settings() {
     f << "hidpi " << (hidpi ? 1 : 0) << "\n";
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
     f << "volume " << volume << "\n";
+#if GB_MOBILE
+    f << "joystick " << (joystick_mode ? 1 : 0) << "\n";
+    f << "snap " << (snap_enabled ? 1 : 0) << "\n";
+    if (layout_custom)
+        for (int i = 0; i < CTRL_COUNT; i++)
+            f << "control " << i << " " << controls[i].x << " " << controls[i].y
+              << " " << controls[i].scale << "\n";
+#endif
 #if GB_DESKTOP
     if (window) {
         int ww = win_w, wh = win_h, wx = win_x, wy = win_y;
@@ -469,16 +499,24 @@ void App::run() {
         }
 #endif
 
+#if GB_MOBILE
+        if (editing_layout) {
+            render_layout_editor();
+        } else
+#endif
         if (state == AppState::PLAYING) {
             // step until a frame is ready
-            uint64_t frame_start = cpu->total_cycles;
-            while (!ppu->frame_ready && cpu->total_cycles - frame_start < 70224) {
-                cpu->step();
-            }
-            ppu->frame_ready = false;
-            if (++battery_flush >= 60) {
-                battery_flush = 0;
-                save_battery_ram();
+            // the settings panel pauses the game rather than running it underneath
+            if (!settings_open) {
+                uint64_t frame_start = cpu->total_cycles;
+                while (!ppu->frame_ready && cpu->total_cycles - frame_start < 70224) {
+                    cpu->step();
+                }
+                ppu->frame_ready = false;
+                if (++battery_flush >= 60) {
+                    battery_flush = 0;
+                    save_battery_ram();
+                }
             }
             if (!apu->samples.empty()) {
                 if (volume < 0.999f)
@@ -708,9 +746,21 @@ bool App::back_button(float cx, float cy, float r) {
     return clicked;
 }
 
+namespace {
+    enum SettingsTab { TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_CONTROLS, TAB_KEYBINDS };
+#if GB_MOBILE
+    // no display tab on mobile, screen fit, vsync and hidpi are all desktop only
+    constexpr SettingsTab kSettingsTabs[] = {TAB_MENU, TAB_AUDIO, TAB_CONTROLS};
+    const char* const kSettingsNames[] = {"menu", "audio", "controls"};
+#else
+    constexpr SettingsTab kSettingsTabs[] = {TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_KEYBINDS};
+    const char* const kSettingsNames[] = {"display", "menu", "audio", "keybinds"};
+#endif
+    constexpr int kSettingsTabCount = (int)(sizeof(kSettingsTabs) / sizeof(kSettingsTabs[0]));
+}
+
 void App::draw_settings(float w, float h) {
 #if GB_MOBILE
-    const int tab_count = 2;
     float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
     float r = std::max(w, h) * 0.0245f;
     float m = r * 0.55f;
@@ -719,7 +769,6 @@ void App::draw_settings(float w, float h) {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * ui, 12.0f * ui));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * ui, 12.0f * ui));
 #else
-    const int tab_count = 3;
     float ui = 1.0f;
     float r = std::max(14.0f, std::min(w, h) * 0.030f);
     float m = r * 1.4f;
@@ -728,7 +777,7 @@ void App::draw_settings(float w, float h) {
 #endif
     if (cog_button(cog_x, cog_y, r)) {
         settings_open = true;
-        settings_tab = (settings_tab < tab_count) ? settings_tab : 0;
+        settings_tab = (settings_tab < kSettingsTabCount) ? settings_tab : 0;
         ImGui::OpenPopup("settings");
     }
 #if GB_DESKTOP
@@ -738,11 +787,11 @@ void App::draw_settings(float w, float h) {
         state = AppState::MENU;
 #endif
 
-    const char* tabs[3] = {"display", "audio", "keybinds"};
     float pad = 22.0f * ui, tab_h = 32.0f * ui, tab_gap = 8.0f * ui, close_h = 40.0f * ui;
-    float tab_w = std::max({ImGui::CalcTextSize(tabs[0]).x,
-                            ImGui::CalcTextSize(tabs[1]).x,
-                            ImGui::CalcTextSize(tabs[2]).x}) + 34.0f * ui;
+    float tab_w = 0.0f;
+    for (int i = 0; i < kSettingsTabCount; i++)
+        tab_w = std::max(tab_w, ImGui::CalcTextSize(kSettingsNames[i]).x);
+    tab_w += 34.0f * ui;
 
     float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
 #if GB_MOBILE
@@ -766,7 +815,7 @@ void App::draw_settings(float w, float h) {
         ImVec2 ws = ImGui::GetWindowSize();
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        for (int i = 0; i < tab_count; i++) {
+        for (int i = 0; i < kSettingsTabCount; i++) {
             float tx = wp.x + 26.0f * ui + i * (tab_w + tab_gap);
             ImGui::SetCursorScreenPos(ImVec2(tx, wp.y));
             ImGui::PushID(i);
@@ -783,9 +832,9 @@ void App::draw_settings(float w, float h) {
                               col, 12.0f * ui, ImDrawFlags_RoundCornersTop);
             glass::rect(dl, ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h),
                         12.0f * ui, ImDrawFlags_RoundCornersTop);
-            ImVec2 ts = ImGui::CalcTextSize(tabs[i]);
+            ImVec2 ts = ImGui::CalcTextSize(kSettingsNames[i]);
             dl->AddText(ImVec2(tx + (tab_w - ts.x) * 0.5f, wp.y + (tab_h - ts.y) * 0.5f),
-                        IM_COL32(0xE6, 0xED, 0xC7, 255), tabs[i]);
+                        IM_COL32(0xE6, 0xED, 0xC7, 255), kSettingsNames[i]);
         }
 
         dl->AddRectFilled(ImVec2(wp.x, wp.y + tab_h), ImVec2(wp.x + ws.x, wp.y + ws.y),
@@ -804,8 +853,7 @@ void App::draw_settings(float w, float h) {
         float ctrl_gap = 18.0f * ui;
         float ctrl_w = 132.0f * ui;
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-        if (settings_tab == 0) {
-            bool any_open = false;
+        bool any_open = false;
             auto combo_row = [&](const char* text, const char* id,
                                  const char* const* items, int n, int cur) {
                 int picked = cur;
@@ -891,20 +939,6 @@ void App::draw_settings(float w, float h) {
                 return picked;
             };
 
-#if GB_DESKTOP
-            const char* modes[3] = {"normal", "crop", "stretch"};
-            int fit = combo_row("screen fit", "##fit", modes, 3, (int)scale_mode);
-            if (fit != (int)scale_mode) {
-                scale_mode = (ScaleMode)fit;
-                save_settings();
-            }
-#endif
-            int fps = combo_row("menu frame cap", "##fps", kFpsNames, 6, fps_index);
-            if (fps != fps_index) {
-                fps_index = fps;
-                save_settings();
-            }
-
             auto toggle_row = [&](const char* text, const char* id, bool on) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(text);
@@ -930,28 +964,6 @@ void App::draw_settings(float w, float h) {
                 return hit;
             };
 
-#if GB_DESKTOP
-            if (toggle_row("vsync", "##vsync", vsync)) {
-                vsync = !vsync;
-                SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
-                save_settings();
-            }
-#endif
-            if (toggle_row("render cartridge", "##cart", render_cartridge)) {
-                render_cartridge = !render_cartridge;
-                save_settings();
-            }
-#if GB_DESKTOP
-            if (toggle_row("hidpi", "##hidpi", hidpi)) {
-                hidpi = !hidpi;
-                video_reset = true;
-                settings_open = false;
-                rebind_target = -1;
-                ImGui::CloseCurrentPopup();
-                save_settings();
-            }
-#endif
-        } else if (settings_tab == 1) {
             auto slider_row = [&](const char* text, const char* id, float v) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(text);
@@ -981,10 +993,81 @@ void App::draw_settings(float w, float h) {
                 return v;
             };
 
+        // each case is braced, the row helpers above declare locals inside them
+        switch (kSettingsTabs[settings_tab]) {
+        case TAB_DISPLAY: {
+#if GB_DESKTOP
+            const char* modes[3] = {"normal", "crop", "stretch"};
+            int fit = combo_row("screen fit", "##fit", modes, 3, (int)scale_mode);
+            if (fit != (int)scale_mode) {
+                scale_mode = (ScaleMode)fit;
+                save_settings();
+            }
+#endif
+#if GB_DESKTOP
+            if (toggle_row("vsync", "##vsync", vsync)) {
+                vsync = !vsync;
+                SDL_RenderSetVSync(renderer, vsync ? 1 : 0);
+                save_settings();
+            }
+#endif
+#if GB_DESKTOP
+            if (toggle_row("hidpi", "##hidpi", hidpi)) {
+                hidpi = !hidpi;
+                video_reset = true;
+                settings_open = false;
+                rebind_target = -1;
+                ImGui::CloseCurrentPopup();
+                save_settings();
+            }
+#endif
+            break;
+        }
+
+        case TAB_MENU: {
+            int fps = combo_row("menu frame cap", "##fps", kFpsNames, 6, fps_index);
+            if (fps != fps_index) {
+                fps_index = fps;
+                save_settings();
+            }
+
+            if (toggle_row("render cartridge", "##cart", render_cartridge)) {
+                render_cartridge = !render_cartridge;
+                save_settings();
+            }
+            break;
+        }
+
+#if GB_MOBILE
+        case TAB_CONTROLS: {
+            if (toggle_row("joystick", "##stick", joystick_mode)) {
+                joystick_mode = !joystick_mode;
+                release_touches();
+                save_settings();
+            }
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("overlay");
+            ImGui::SameLine();
+            ImVec2 bp = ImGui::GetCursorScreenPos();
+            bp.x = right_edge - ctrl_gap - ctrl_w;
+            ImGui::SetCursorScreenPos(bp);
+            if (glass::button("edit layout", ImVec2(ctrl_w, 0))) {
+                begin_layout_edit();
+                settings_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            break;
+        }
+#endif
+
+        case TAB_AUDIO: {
             volume = slider_row("volume", "##volume", volume);
             if (ImGui::IsItemDeactivated())
                 save_settings();
-        } else {
+            break;
+        }
+
+        default: {
             const char* names[8] = {"right", "left", "up", "down", "a", "b", "select", "start"};
             const int order[8] = {2, 3, 1, 0, 4, 5, 6, 7};
             for (int k = 0; k < 8; k++) {
@@ -1012,6 +1095,8 @@ void App::draw_settings(float w, float h) {
                 if (waiting) ImGui::PopStyleColor();
                 ImGui::PopID();
             }
+            break;
+        }
         }
         {
             ImGuiIO& sio = ImGui::GetIO();
@@ -1133,7 +1218,12 @@ void App::handle_events() {
                 settings_open = false;
                 continue;
             }
-            if (state == AppState::PLAYING) {
+    #if GB_MOBILE
+        if (editing_layout) {
+            render_layout_editor();
+        } else
+#endif
+        if (state == AppState::PLAYING) {
                 state = AppState::MENU;
                 continue;
             }

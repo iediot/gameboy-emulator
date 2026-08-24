@@ -216,6 +216,7 @@ void Ppu::draw_scanline() {
 void Ppu::step(uint8_t cycles) {
     if (!(mem.read_direct(LCDC_ADDR) & 0x80)) {
         scanline_cycles = 0;
+        ly_counter = 0;
         mem.write_direct(LY_ADDR, 0);
         mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & 0xFC);
         window_line_counter = 0;
@@ -243,29 +244,32 @@ void Ppu::step(uint8_t cycles) {
 
     if (scanline_cycles >= 456) {
         scanline_cycles -= 456;
-        mem.write_direct(LY_ADDR, mem.read_direct(LY_ADDR) + 1); // LY increment
+        ly_counter++;
 
-        // set bit 2 of STAT if LY == LYC
-        if (mem.read_direct(LY_ADDR) == mem.read_direct(LYC_ADDR))
-            mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) | 0x04);
-        // if LY != LYC clear bit 2 of STAT
-        if (mem.read_direct(LY_ADDR) != mem.read_direct(LYC_ADDR))
-            mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & ~0x04);
-
-        if (mem.read_direct(LY_ADDR) >= 154) { // check LY if over 154
-            mem.write_direct(LY_ADDR, 0); // reset to 0 if true
+        if (ly_counter >= 154) {
+            ly_counter = 0;
             window_line_counter = 0; // also reset the window counter
         }
-        if (mem.read_direct(LY_ADDR) == 144) {
+        if (ly_counter == 144) {
             mem.write_direct(IF_ADDR, mem.read_direct(IF_ADDR) | 0x01);
             frame_ready = true;
         }
     }
 
+    // line 153 runs its full length but LY only reads 153 for the first few cycles and
+    // reports 0 for the rest, so a game polling for LY==0 gets a scanline of head start
+    uint8_t ly = (ly_counter == 153 && scanline_cycles >= 4) ? 0 : ly_counter;
+    mem.write_direct(LY_ADDR, ly);
+
+    if (ly == mem.read_direct(LYC_ADDR))
+        mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) | 0x04);
+    else
+        mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & ~0x04);
+
     if (scanline_cycles == 80)
         mode3_extra = mem.read_direct(SCX_ADDR) & 7;
 
-    if (mem.read_direct(LY_ADDR) >= 144) { // mode 1 - VBlank
+    if (ly_counter >= 144) { // mode 1 - VBlank
         mode = 1;
     } else if (scanline_cycles < 80) { // mode 2 - OAM scan
         mode = 2;
@@ -276,7 +280,7 @@ void Ppu::step(uint8_t cycles) {
     }
 
     uint8_t STAT = mem.read_direct(STAT_ADDR);
-    bool coincidence = mem.read_direct(LY_ADDR) == mem.read_direct(LYC_ADDR);
+    bool coincidence = ly == mem.read_direct(LYC_ADDR);
 
     bool line = (mode == 0 && (STAT & 0x08))
              || (mode == 1 && (STAT & 0x10))
@@ -289,7 +293,7 @@ void Ppu::step(uint8_t cycles) {
 
     mem.write_direct(STAT_ADDR, (mem.read_direct(STAT_ADDR) & 0xFC) | mode);
 
-    if (mode == 0 && prev_mode != 0 && mem.read_direct(LY_ADDR) < 144)
+    if (mode == 0 && prev_mode != 0 && ly_counter < 144)
         draw_scanline();
 
     prev_mode = mode;

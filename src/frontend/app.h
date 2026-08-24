@@ -31,6 +31,11 @@ inline constexpr double      kGbFps       = 59.7275;
 
 enum class ScaleMode { NORMAL, CROP, STRETCH };
 
+// touch overlay placement, x and y are the control's centre as a fraction of the output
+// size so a layout survives a change of device, scale multiplies its default size
+enum TouchControl { CTRL_DPAD, CTRL_A, CTRL_B, CTRL_START, CTRL_SELECT, CTRL_COUNT };
+struct TouchPlacement { float x = 0.0f, y = 0.0f, scale = 1.0f; };
+
 class App {
 private:
     // private members
@@ -89,7 +94,23 @@ private:
     bool in_live_resize = false;
     SDL_Keycode keybinds[8];
 #if GB_MOBILE
-    std::map<SDL_FingerID, int> touch_buttons; // live fingers to the joypad bit each one holds
+    std::map<SDL_FingerID, int> touch_buttons; // live fingers to the joypad bits each one holds
+
+    // touch overlay, see TouchPlacement, custom stays false until the editor is used
+    TouchPlacement controls[CTRL_COUNT] = {};
+    bool layout_custom = false;
+    bool joystick_mode = false;
+    SDL_FingerID stick_finger = 0;  // the finger that grabbed the stick, it keeps it until lifted
+    bool stick_held = false;
+    float stick_dx = 0.0f;          // live thumb offset, -1..1 of the base radius
+    float stick_dy = 0.0f;
+    bool editing_layout = false;
+    int editing_pick = -1;
+    float drag_grab_x = 0.0f;
+    float drag_grab_y = 0.0f;
+    bool snap_enabled = true;
+    int drag_mode = 0;              // 0 none, 1 moving a control, 2 dragging the size slider
+    float slider_v = 0.0f;          // knob position while dragging, free of the size clamp
     bool active = true;             // false while backgrounded, we must not touch the gpu then
     std::vector<std::string> import_prev; // rom_list snapshot taken when the add-game picker opens
 #endif
@@ -127,6 +148,11 @@ private:
     void render_menu_mobile();
     void render_game_mobile();
     void handle_touch_mobile(const SDL_Event& event);
+    void release_touches();
+    bool layout_fits(int out_w, int out_h) const;
+    bool fit_control(int which, int out_w, int out_h);
+    void begin_layout_edit();
+    void render_layout_editor();
 #endif
 public:
     // constructor

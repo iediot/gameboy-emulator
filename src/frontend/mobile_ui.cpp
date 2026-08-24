@@ -13,6 +13,7 @@
 #include "app.h"
 #include "glass.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
@@ -25,6 +26,13 @@ extern "C" bool gb_take_import_done();
 namespace {
     // joypad bits: 0 right, 1 left, 2 up, 3 down, 4 a, 5 b, 6 select, 7 start
     enum { BIT_RIGHT = 0, BIT_LEFT, BIT_UP, BIT_DOWN, BIT_A, BIT_B, BIT_SELECT, BIT_START };
+
+    // a finger now holds a mask rather than one bit, so a joystick diagonal can press two
+    constexpr float kPi = 3.14159265f;
+    constexpr float kScaleMin = 0.65f;
+    constexpr float kScaleMax = 1.75f;
+    constexpr int MASK_NONE = 0;
+    inline int bit_mask(int bit) { return 1 << bit; }
 
     constexpr ImU32 kBg     = IM_COL32(0x17, 0x1A, 0x0D, 0xFF);
     constexpr ImU32 kFrame  = IM_COL32(0x27, 0x2B, 0x1A, 0xFF);
@@ -42,11 +50,12 @@ namespace {
     struct Layout {
         ImVec2 lcd_min, lcd_max;
         ImVec2 pad;    float pad_arm, pad_half;
-        ImVec2 a, b;   float face_r;
-        ImVec2 select, start; ImVec2 pill_half;
+        ImVec2 a, b;   float a_r, b_r;
+        ImVec2 select, start;
+        ImVec2 start_half, select_half;
     };
 
-    Layout layout_for(int out_w, int out_h) {
+    Layout layout_for(int out_w, int out_h, const TouchPlacement* place = nullptr) {
         float w = (float)out_w, h = (float)out_h;
         Layout l;
 
@@ -73,35 +82,105 @@ namespace {
         l.pad_arm  = u * 0.155f;
         l.pad_half = l.pad_arm * 0.34f;
 
-        l.face_r = u * 0.082f;
+        l.a_r = l.b_r = u * 0.082f;
         l.a = ImVec2(w * 0.845f, pad_y - u * 0.047f);
         l.b = ImVec2(w * 0.655f, pad_y + u * 0.047f);
 
-        l.pill_half = ImVec2(u * 0.105f, u * 0.032f);
+        l.start_half = l.select_half = ImVec2(u * 0.105f, u * 0.032f);
         l.select = ImVec2(w * 0.37f, pill_y);
         l.start  = ImVec2(w * 0.63f, pill_y);
+
+        if (!place)
+            return l;
+
+        // a custom layout overrides the defaults, keeping the screen where it is, and
+        // every control carries its own position and size
+        l.pad      = ImVec2(w * place[CTRL_DPAD].x, h * place[CTRL_DPAD].y);
+        l.pad_arm  = u * 0.155f * place[CTRL_DPAD].scale;
+        l.pad_half = l.pad_arm * 0.34f;
+
+        l.a   = ImVec2(w * place[CTRL_A].x, h * place[CTRL_A].y);
+        l.a_r = u * 0.082f * place[CTRL_A].scale;
+        l.b   = ImVec2(w * place[CTRL_B].x, h * place[CTRL_B].y);
+        l.b_r = u * 0.082f * place[CTRL_B].scale;
+
+        l.start       = ImVec2(w * place[CTRL_START].x, h * place[CTRL_START].y);
+        l.start_half  = ImVec2(u * 0.105f * place[CTRL_START].scale,
+                               u * 0.032f * place[CTRL_START].scale);
+        l.select      = ImVec2(w * place[CTRL_SELECT].x, h * place[CTRL_SELECT].y);
+        l.select_half = ImVec2(u * 0.105f * place[CTRL_SELECT].scale,
+                               u * 0.032f * place[CTRL_SELECT].scale);
         return l;
     }
 
+    // the stick reports one of eight octants, the four diagonals holding two bits at once
+    int stick_mask(float dx, float dy, float dead) {
+        if (dx * dx + dy * dy < dead * dead)
+            return MASK_NONE;
+        float a = std::atan2(dy, dx) + kPi;              // 0..2pi, 0 pointing left
+        int octant = (int)((a + kPi / 8.0f) / (kPi / 4.0f)) & 7;
+        static const int kOctants[8] = {
+            bit_mask(BIT_LEFT),
+            bit_mask(BIT_LEFT)  | bit_mask(BIT_UP),
+            bit_mask(BIT_UP),
+            bit_mask(BIT_UP)    | bit_mask(BIT_RIGHT),
+            bit_mask(BIT_RIGHT),
+            bit_mask(BIT_RIGHT) | bit_mask(BIT_DOWN),
+            bit_mask(BIT_DOWN),
+            bit_mask(BIT_DOWN)  | bit_mask(BIT_LEFT)
+        };
+        return kOctants[octant];
+    }
+
+    // half extents of each control's touch box, used for the editor's collision rules
+    ImVec2 control_half(const Layout& l, int which) {
+        switch (which) {
+            case CTRL_DPAD:  return ImVec2(l.pad_arm, l.pad_arm);
+            case CTRL_A:     return ImVec2(l.a_r, l.a_r);
+            case CTRL_B:     return ImVec2(l.b_r, l.b_r);
+            case CTRL_START: return l.start_half;
+            default:         return l.select_half;
+        }
+    }
+
+    ImVec2 control_centre(const Layout& l, int which) {
+        switch (which) {
+            case CTRL_DPAD:  return l.pad;
+            case CTRL_A:     return l.a;
+            case CTRL_B:     return l.b;
+            case CTRL_START: return l.start;
+            default:         return l.select;
+        }
+    }
+
     // hit areas run wider than the drawn shapes so a thumb landing on an edge still counts
-    int control_at(const Layout& l, float x, float y) {
+    int control_at(const Layout& l, float x, float y, bool stick) {
         float dx = x - l.pad.x, dy = y - l.pad.y;
-        float arm = l.pad_arm * 1.15f, half = l.pad_half * 1.45f;
-        bool vert = std::fabs(dx) <= half && std::fabs(dy) <= arm;
-        bool horz = std::fabs(dy) <= half && std::fabs(dx) <= arm;
-        if (vert && (!horz || std::fabs(dy) >= std::fabs(dx))) return dy < 0 ? BIT_UP : BIT_DOWN;
-        if (horz) return dx < 0 ? BIT_LEFT : BIT_RIGHT;
+        if (stick) {
+            float r = l.pad_arm * 1.15f;
+            if (dx * dx + dy * dy <= r * r)
+                return stick_mask(dx, dy, l.pad_arm * 0.30f);
+        } else {
+            float arm = l.pad_arm * 1.15f, half = l.pad_half * 1.45f;
+            bool vert = std::fabs(dx) <= half && std::fabs(dy) <= arm;
+            bool horz = std::fabs(dy) <= half && std::fabs(dx) <= arm;
+            if (vert && (!horz || std::fabs(dy) >= std::fabs(dx)))
+                return bit_mask(dy < 0 ? BIT_UP : BIT_DOWN);
+            if (horz)
+                return bit_mask(dx < 0 ? BIT_LEFT : BIT_RIGHT);
+        }
 
-        float fr = l.face_r * 1.3f;
+        float ar = l.a_r * 1.3f, brr = l.b_r * 1.3f;
         float ax = x - l.a.x, ay = y - l.a.y;
-        if (ax * ax + ay * ay <= fr * fr) return BIT_A;
+        if (ax * ax + ay * ay <= ar * ar) return bit_mask(BIT_A);
         float bx = x - l.b.x, by = y - l.b.y;
-        if (bx * bx + by * by <= fr * fr) return BIT_B;
+        if (bx * bx + by * by <= brr * brr) return bit_mask(BIT_B);
 
-        float pw = l.pill_half.x * 1.25f, ph = l.pill_half.y * 1.9f;
-        if (std::fabs(x - l.select.x) <= pw && std::fabs(y - l.select.y) <= ph) return BIT_SELECT;
-        if (std::fabs(x - l.start.x)  <= pw && std::fabs(y - l.start.y)  <= ph) return BIT_START;
-        return -1;
+        if (std::fabs(x - l.select.x) <= l.select_half.x * 1.25f &&
+            std::fabs(y - l.select.y) <= l.select_half.y * 1.9f) return bit_mask(BIT_SELECT);
+        if (std::fabs(x - l.start.x) <= l.start_half.x * 1.25f &&
+            std::fabs(y - l.start.y) <= l.start_half.y * 1.9f) return bit_mask(BIT_START);
+        return MASK_NONE;
     }
 
     // same shape and palette as the cog and back buttons so the header reads as a pair
@@ -128,43 +207,76 @@ namespace {
         dl->AddText(font, size, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), kLabel, text);
     }
 
-    void draw_controls(ImDrawList* dl, const Layout& l, const bool* held) {
+    // the stick sits where the cross would, its thumb offset toward whatever is held
+    // the thumb follows the finger anywhere inside the base, the eight octants are only
+    // what gets reported to the joypad
+    void draw_stick(ImDrawList* dl, const Layout& l, float dx, float dy, bool active) {
+        float r = l.pad_arm;
+        dl->AddCircleFilled(l.pad, r, kPad, 48);
+        glass::circle(dl, l.pad, r);
+
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len > 1.0f) { dx /= len; dy /= len; len = 1.0f; }
+
+        float travel = r * 0.42f;
+        ImVec2 thumb(l.pad.x + dx * travel, l.pad.y + dy * travel);
+        float tr = r * 0.46f;
+        dl->AddCircleFilled(thumb, tr, active ? kPadOn : kPivot, 40);
+        glass::circle(dl, thumb, tr);
+    }
+
+    void draw_controls(ImDrawList* dl, const Layout& l, const bool* held, bool stick,
+                       float sx, float sy, bool stick_on) {
+        if (stick) {
+            draw_stick(dl, l, sx, sy, stick_on);
+        } else {
         // the cross stays opaque and unclipped, the glass treatment reads badly on a plus
         // and any attempt to tile it leaves seams where the arms meet
         float cx = l.pad.x, cy = l.pad.y, r = l.pad_arm, t = l.pad_half, rd = t * 0.45f;
         dl->AddRectFilled(ImVec2(cx - t, cy - r), ImVec2(cx + t, cy + r), kPad, rd);
         dl->AddRectFilled(ImVec2(cx - r, cy - t), ImVec2(cx + r, cy + t), kPad, rd);
+        // only the tip beyond the centre square lights up, and it ramps from the resting
+        // colour where it leaves the square to the full one at the end of the arm
+        auto lit_arm = [&](ImVec2 p0, ImVec2 p1, ImDrawFlags corners, ImVec2 from, ImVec2 to) {
+            int v0 = dl->VtxBuffer.Size;
+            dl->AddRectFilled(p0, p1, kPadOn, rd, corners);
+            ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size,
+                                                          from, to, kPad, kPadOn);
+        };
         if (held[BIT_UP])
-            dl->AddRectFilled(ImVec2(cx - t, cy - r), ImVec2(cx + t, cy), kPadOn, rd, ImDrawFlags_RoundCornersTop);
+            lit_arm(ImVec2(cx - t, cy - r), ImVec2(cx + t, cy - t), ImDrawFlags_RoundCornersTop,
+                    ImVec2(cx, cy - t), ImVec2(cx, cy - r));
         if (held[BIT_DOWN])
-            dl->AddRectFilled(ImVec2(cx - t, cy), ImVec2(cx + t, cy + r), kPadOn, rd, ImDrawFlags_RoundCornersBottom);
+            lit_arm(ImVec2(cx - t, cy + t), ImVec2(cx + t, cy + r), ImDrawFlags_RoundCornersBottom,
+                    ImVec2(cx, cy + t), ImVec2(cx, cy + r));
         if (held[BIT_LEFT])
-            dl->AddRectFilled(ImVec2(cx - r, cy - t), ImVec2(cx, cy + t), kPadOn, rd, ImDrawFlags_RoundCornersLeft);
+            lit_arm(ImVec2(cx - r, cy - t), ImVec2(cx - t, cy + t), ImDrawFlags_RoundCornersLeft,
+                    ImVec2(cx - t, cy), ImVec2(cx - r, cy));
         if (held[BIT_RIGHT])
-            dl->AddRectFilled(ImVec2(cx, cy - t), ImVec2(cx + r, cy + t), kPadOn, rd, ImDrawFlags_RoundCornersRight);
+            lit_arm(ImVec2(cx + t, cy - t), ImVec2(cx + r, cy + t), ImDrawFlags_RoundCornersRight,
+                    ImVec2(cx + t, cy), ImVec2(cx + r, cy));
         glass::cross(dl, l.pad, r, t, rd);
         dl->AddCircleFilled(l.pad, t * 0.5f, kPivot, 28);
+        }
 
-        ImU32 b_col = held[BIT_B] ? kFaceOn : kFace;
-        ImU32 a_col = held[BIT_A] ? kFaceOn : kFace;
-        dl->AddCircleFilled(l.b, l.face_r, b_col, 40);
-        glass::circle(dl, l.b, l.face_r);
-        dl->AddCircleFilled(l.a, l.face_r, a_col, 40);
-        glass::circle(dl, l.a, l.face_r);
-        centred_label(dl, l.b, l.face_r * 0.85f, "B");
-        centred_label(dl, l.a, l.face_r * 0.85f, "A");
+        auto face = [&](ImVec2 c, float r, bool on, const char* label) {
+            ImU32 col = on ? kFaceOn : kFace;
+            dl->AddCircleFilled(c, r, col, 40);
+            glass::circle(dl, c, r);
+            centred_label(dl, c, r * 0.85f, label);
+        };
+        face(l.b, l.b_r, held[BIT_B], "B");
+        face(l.a, l.a_r, held[BIT_A], "A");
 
-        ImVec2 ph = l.pill_half;
-        ImU32 sel_col = held[BIT_SELECT] ? kPillOn : kPill;
-        ImU32 st_col  = held[BIT_START]  ? kPillOn : kPill;
-        ImVec2 sel0(l.select.x - ph.x, l.select.y - ph.y), sel1(l.select.x + ph.x, l.select.y + ph.y);
-        ImVec2 st0(l.start.x - ph.x, l.start.y - ph.y),    st1(l.start.x + ph.x, l.start.y + ph.y);
-        dl->AddRectFilled(sel0, sel1, sel_col, ph.y);
-        glass::rect(dl, sel0, sel1, ph.y);
-        dl->AddRectFilled(st0, st1, st_col, ph.y);
-        glass::rect(dl, st0, st1, ph.y);
-        centred_label(dl, l.select, ph.y * 0.95f, "SELECT");
-        centred_label(dl, l.start,  ph.y * 0.95f, "START");
+        auto pill = [&](ImVec2 c, ImVec2 e, bool on, const char* label) {
+            ImU32 col = on ? kPillOn : kPill;
+            ImVec2 p0(c.x - e.x, c.y - e.y), p1(c.x + e.x, c.y + e.y);
+            dl->AddRectFilled(p0, p1, col, e.y);
+            glass::rect(dl, p0, p1, e.y);
+            centred_label(dl, c, e.y * 0.95f, label);
+        };
+        pill(l.select, l.select_half, held[BIT_SELECT], "SELECT");
+        pill(l.start,  l.start_half,  held[BIT_START],  "START");
     }
 
     // ios reports the window in points and the renderer in pixels, so the ratio between
@@ -206,14 +318,15 @@ void App::render_game_mobile() {
 
     int out_w, out_h;
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
-    Layout l = layout_for(out_w, out_h);
+    Layout l = layout_for(out_w, out_h, layout_custom ? controls : nullptr);
 
     SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0d, 0xFF);
     SDL_RenderClear(renderer);
 
     bool held[8] = {};
     for (const auto& f : touch_buttons)
-        if (f.second >= 0 && f.second < 8) held[f.second] = true;
+        for (int b = 0; b < 8; b++)
+            if (f.second & bit_mask(b)) held[b] = true;
 
     // screen and joypad both go through the overlay draw list so they layer in one pass
     ImGui_ImplSDLRenderer2_NewFrame();
@@ -243,7 +356,7 @@ void App::render_game_mobile() {
     // concentric with the frame, so the grey border keeps an even width round the corners
     dl->AddImageRounded((ImTextureID)texture, l.lcd_min, l.lcd_max,
                         ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, round - inset);
-    draw_controls(dl, l, held);
+    draw_controls(dl, l, held, joystick_mode, stick_dx, stick_dy, stick_held);
 
 #if GB_TOUCH_DEBUG
     // walk the screen and dot every point that maps to a control, shows the real hit areas
@@ -256,10 +369,10 @@ void App::render_game_mobile() {
 
     float br = std::max((float)out_w, (float)out_h) * 0.0245f;
     if (back_button(br * 1.55f, br * 2.4f + out_h * 0.03f, br)) {
-        for (auto& h : touch_buttons) mem->set_button(h.second, false);
-        touch_buttons.clear();
+        release_touches();
         state = AppState::MENU;
     }
+    draw_settings((float)out_w, (float)out_h);
     ImGui::End();
     ImGui::PopStyleVar();
     ImGui::Render();
@@ -580,9 +693,24 @@ void App::render_menu_mobile() {
 }
 
 // turns finger touches into joypad presses and drives the back button, supports several fingers at once
+void App::release_touches() {
+    stick_held = false;
+    stick_dx = stick_dy = 0.0f;
+    for (const auto& f : touch_buttons)
+        for (int b = 0; b < 8; b++)
+            if (f.second & bit_mask(b)) mem->set_button(b, false);
+    touch_buttons.clear();
+}
+
 void App::handle_touch_mobile(const SDL_Event& event) {
     if (event.type != SDL_FINGERDOWN && event.type != SDL_FINGERUP && event.type != SDL_FINGERMOTION)
         return;
+
+    // the settings panel pauses the game, so fingers belong to the ui while it is up
+    if (settings_open || editing_layout) {
+        release_touches();
+        return;
+    }
 
     int out_w, out_h;
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
@@ -595,24 +723,345 @@ void App::handle_touch_mobile(const SDL_Event& event) {
     if ((px - bcx) * (px - bcx) + (py - bcy) * (py - bcy) <= (br * 1.6f) * (br * 1.6f))
         return;
 
-    int bit = control_at(layout_for(out_w, out_h), px, py);
+    Layout l = layout_for(out_w, out_h, layout_custom ? controls : nullptr);
     SDL_FingerID id = event.tfinger.fingerId;
 
-    if (event.type == SDL_FINGERDOWN) {
-        if (bit >= 0) { mem->set_button(bit, true); touch_buttons[id] = bit; }
-    } else if (event.type == SDL_FINGERMOTION) {
-        // a finger that slides off its zone onto another swaps the press over
-        auto it = touch_buttons.find(id);
-        int held = (it != touch_buttons.end()) ? it->second : -1;
-        if (bit != held) {
-            if (held >= 0) mem->set_button(held, false);
-            if (bit >= 0) { mem->set_button(bit, true); touch_buttons[id] = bit; }
-            else if (it != touch_buttons.end()) touch_buttons.erase(it);
+    // a finger that lands on the stick keeps it until it lifts, so sliding past the rim
+    // steers instead of letting go, but a finger starting outside never grabs it
+    int mask;
+    if (joystick_mode && stick_held && id == stick_finger && event.type != SDL_FINGERUP) {
+        mask = stick_mask(px - l.pad.x, py - l.pad.y, l.pad_arm * 0.30f);
+    } else {
+        mask = control_at(l, px, py, joystick_mode);
+        if (joystick_mode && event.type == SDL_FINGERDOWN) {
+            float dx = px - l.pad.x, dy = py - l.pad.y;
+            float grab = l.pad_arm * 1.15f;
+            if (dx * dx + dy * dy <= grab * grab) {
+                stick_held = true;
+                stick_finger = id;
+            }
         }
-    } else { // SDL_FINGERUP
-        auto it = touch_buttons.find(id);
-        if (it != touch_buttons.end()) { mem->set_button(it->second, false); touch_buttons.erase(it); }
     }
+    if (stick_held && id == stick_finger) {
+        if (event.type == SDL_FINGERUP) {
+            stick_held = false;
+            stick_dx = stick_dy = 0.0f;
+        } else {
+            stick_dx = (px - l.pad.x) / l.pad_arm;
+            stick_dy = (py - l.pad.y) / l.pad_arm;
+        }
+    }
+
+    auto apply = [&](int held, int wanted) {
+        for (int b = 0; b < 8; b++) {
+            bool was = held & bit_mask(b), now = wanted & bit_mask(b);
+            if (was != now) mem->set_button(b, now);
+        }
+    };
+
+    auto it = touch_buttons.find(id);
+    int held = (it != touch_buttons.end()) ? it->second : MASK_NONE;
+
+    if (event.type == SDL_FINGERUP) {
+        apply(held, MASK_NONE);
+        if (it != touch_buttons.end()) touch_buttons.erase(it);
+        return;
+    }
+    // a finger that slides off its zone onto another swaps the press over
+    if (mask != held) {
+        apply(held, mask);
+        if (mask == MASK_NONE) {
+            if (it != touch_buttons.end()) touch_buttons.erase(it);
+        } else {
+            touch_buttons[id] = mask;
+        }
+    }
+}
+
+// controls may overlap each other, but none may leave the display or sit on or above
+// the screen area
+bool App::layout_fits(int out_w, int out_h) const {
+    Layout l = layout_for(out_w, out_h, controls);
+    float floor_y = l.lcd_max.y + out_w * 0.018f;
+    ImVec2 c[CTRL_COUNT], e[CTRL_COUNT];
+    for (int i = 0; i < CTRL_COUNT; i++) {
+        c[i] = control_centre(l, i);
+        e[i] = control_half(l, i);
+    }
+    for (int i = 0; i < CTRL_COUNT; i++) {
+        if (c[i].x - e[i].x < 0.0f || c[i].x + e[i].x > (float)out_w) return false;
+        if (c[i].y + e[i].y > (float)out_h) return false;
+        if (c[i].y - e[i].y < floor_y) return false;
+    }
+    return true;
+}
+
+// a control that would grow past an edge is pushed back inside rather than refused,
+// false only when it is too big to fit anywhere
+bool App::fit_control(int which, int out_w, int out_h) {
+    Layout l = layout_for(out_w, out_h, controls);
+    ImVec2 c = control_centre(l, which), e = control_half(l, which);
+    float floor_y = l.lcd_max.y + out_w * 0.018f;
+
+    if (e.x * 2.0f > (float)out_w || e.y * 2.0f > (float)out_h - floor_y)
+        return false;
+
+    float nx = std::clamp(c.x, e.x, (float)out_w - e.x);
+    float ny = std::clamp(c.y, floor_y + e.y, (float)out_h - e.y);
+    controls[which].x += (nx - c.x) / (float)out_w;
+    controls[which].y += (ny - c.y) / (float)out_h;
+    return true;
+}
+
+// seeds the editor from whatever layout is on screen so nothing jumps when it opens
+void App::begin_layout_edit() {
+    int out_w, out_h;
+    SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
+    Layout l = layout_for(out_w, out_h, layout_custom ? controls : nullptr);
+    for (int i = 0; i < CTRL_COUNT; i++) {
+        ImVec2 c = control_centre(l, i);
+        controls[i].x = c.x / (float)out_w;
+        controls[i].y = c.y / (float)out_h;
+        if (!layout_custom) controls[i].scale = 1.0f;
+    }
+    layout_custom = true;
+    editing_layout = true;
+    editing_pick = -1;
+    release_touches();
+}
+
+void App::render_layout_editor() {
+    SDL_RenderSetLogicalSize(renderer, 0, 0);
+    SDL_RenderSetClipRect(renderer, nullptr);
+    SDL_RenderSetViewport(renderer, nullptr);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
+
+    int out_w, out_h;
+    SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
+    Layout l = layout_for(out_w, out_h, controls);
+
+    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0d, 0xFF);
+    SDL_RenderClear(renderer);
+
+    ImGui_ImplSDLRenderer2_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGuiIO& io = ImGui::GetIO();
+    int win_w, win_h;
+    SDL_GetWindowSize(window, &win_w, &win_h);
+    io.DisplaySize = ImVec2((float)out_w, (float)out_h);
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    io.FontGlobalScale = ui_scale(out_w, win_w);
+    ImGui::NewFrame();
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::Begin("##editor", nullptr,
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // the screen area is off limits, drawn so its boundary is obvious while dragging
+    float inset = out_w * 0.018f;
+    dl->AddRectFilled(ImVec2(l.lcd_min.x - inset, l.lcd_min.y - inset),
+                      ImVec2(l.lcd_max.x + inset, l.lcd_max.y + inset),
+                      kFrame, out_w * 0.03f);
+    dl->AddRectFilled(l.lcd_min, l.lcd_max, IM_COL32(0x62, 0x71, 0x02, 0xFF),
+                      out_w * 0.03f - inset);
+    centred_label(dl, ImVec2((l.lcd_min.x + l.lcd_max.x) * 0.5f,
+                             (l.lcd_min.y + l.lcd_max.y) * 0.5f),
+                  out_w * 0.05f, "screen");
+
+    bool held[8] = {};
+    draw_controls(dl, l, held, joystick_mode, stick_dx, stick_dy, stick_held);
+
+    // outline whichever control is being moved
+    if (editing_pick >= 0) {
+        ImVec2 c = control_centre(l, editing_pick), e = control_half(l, editing_pick);
+        dl->AddRect(ImVec2(c.x - e.x, c.y - e.y), ImVec2(c.x + e.x, c.y + e.y),
+                    IM_COL32(255, 255, 255, 200), 6.0f, 0, glass::hairline() * 1.5f);
+    }
+
+    // reset, the size slider and done share the band above the screen, clear of the status
+    // bar at the top and of the home indicator at the bottom
+    float br = std::max((float)out_w, (float)out_h) * 0.0245f;
+    float bh = br * 1.5f;
+    float bw = (float)out_w * 0.16f;
+    float gap = (float)out_w * 0.02f;
+    float bx = (float)out_w * 0.05f;
+    float by = br * 2.4f + out_h * 0.03f - bh * 0.5f;
+    float sx = bx + bw * 2.0f + gap * 2.0f;
+    float sw = ((float)out_w * 0.95f - bw - gap) - sx;
+    float sh = bh * 0.55f;
+    float sy = by + (bh - sh) * 0.5f;
+
+    // one gesture at a time, whatever the finger lands on owns it until it lifts
+    if (ImGui::IsMouseClicked(0)) {
+        drag_mode = 0;
+        bool on_slider = editing_pick >= 0 &&
+                         io.MousePos.x >= sx && io.MousePos.x <= sx + sw &&
+                         std::fabs(io.MousePos.y - (sy + sh * 0.5f)) <= bh * 0.6f;
+        if (on_slider) {
+            drag_mode = 2;
+        } else if (io.MousePos.y > l.lcd_max.y) {
+            for (int i = 0; i < CTRL_COUNT; i++) {
+                ImVec2 c = control_centre(l, i), e = control_half(l, i);
+                if (std::fabs(io.MousePos.x - c.x) <= e.x &&
+                    std::fabs(io.MousePos.y - c.y) <= e.y) {
+                    editing_pick = i;
+                    drag_grab_x = io.MousePos.x - c.x;
+                    drag_grab_y = io.MousePos.y - c.y;
+                    drag_mode = 1;
+                    break;
+                }
+            }
+            if (drag_mode == 0) editing_pick = -1;
+        }
+    }
+    if (!ImGui::IsMouseDown(0))
+        drag_mode = 0;
+
+    if (drag_mode == 1 && editing_pick >= 0) {
+        TouchPlacement keep = controls[editing_pick];
+        float cx = io.MousePos.x - drag_grab_x;
+        float cy = io.MousePos.y - drag_grab_y;
+
+        // pull the control onto a match once it is close enough: sharing an axis with
+        // another control, mirroring one across the display centre, or sitting at 45
+        // degrees from one
+        float snap = snap_enabled ? (float)out_w * 0.022f : 0.0f;
+        float mid = (float)out_w * 0.5f;
+        float gx = -1.0f, gy = -1.0f;
+        bool mirrored = false;
+        ImVec2 diag_from(0.0f, 0.0f);
+        bool diag = false;
+
+        for (int i = 0; i < CTRL_COUNT; i++) {
+            if (i == editing_pick) continue;
+            ImVec2 o = control_centre(l, i);
+            if (gx < 0.0f && std::fabs(cx - o.x) < snap) { cx = o.x; gx = o.x; }
+            if (gy < 0.0f && std::fabs(cy - o.y) < snap) { cy = o.y; gy = o.y; }
+        }
+        // the same gap on this one's outer side as the other has on its own
+        for (int i = 0; i < CTRL_COUNT && gx < 0.0f; i++) {
+            if (i == editing_pick) continue;
+            float t = (float)out_w - control_centre(l, i).x;
+            if (std::fabs(cx - t) < snap) { cx = t; gx = t; mirrored = true; }
+        }
+        if (gx < 0.0f && std::fabs(cx - mid) < snap) { cx = mid; gx = mid; }
+
+        if (gx < 0.0f && gy < 0.0f) {
+            for (int i = 0; i < CTRL_COUNT; i++) {
+                if (i == editing_pick) continue;
+                ImVec2 o = control_centre(l, i);
+                float dx = cx - o.x, dy = cy - o.y;
+                if (std::fabs(dx) > snap && std::fabs(std::fabs(dx) - std::fabs(dy)) < snap) {
+                    float d = (std::fabs(dx) + std::fabs(dy)) * 0.5f;
+                    cx = o.x + std::copysign(d, dx);
+                    cy = o.y + std::copysign(d, dy);
+                    diag_from = o;
+                    diag = true;
+                    break;
+                }
+            }
+        }
+
+        ImU32 guide = IM_COL32(255, 255, 255, 90);
+        float hair = glass::hairline();
+        if (gx >= 0.0f)
+            dl->AddLine(ImVec2(gx, l.lcd_max.y), ImVec2(gx, (float)out_h), guide, hair);
+        if (gy >= 0.0f)
+            dl->AddLine(ImVec2(0.0f, gy), ImVec2((float)out_w, gy), guide, hair);
+        if (mirrored)
+            dl->AddLine(ImVec2(mid, l.lcd_max.y), ImVec2(mid, (float)out_h),
+                        IM_COL32(255, 255, 255, 50), hair);
+        if (diag)
+            dl->AddLine(diag_from, ImVec2(cx, cy), guide, hair);
+
+        float wx = cx / (float)out_w;
+        float wy = cy / (float)out_h;
+        controls[editing_pick].x = wx;
+        controls[editing_pick].y = wy;
+        // a blocked move still takes whichever axis is free, so a control slides
+        // along an obstacle instead of sticking to it
+        if (!layout_fits(out_w, out_h)) {
+            controls[editing_pick] = keep;
+            controls[editing_pick].x = wx;
+            if (!layout_fits(out_w, out_h)) {
+                controls[editing_pick] = keep;
+                controls[editing_pick].y = wy;
+                if (!layout_fits(out_w, out_h))
+                    controls[editing_pick] = keep;
+            }
+        }
+    }
+
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    if (glass::button("reset", ImVec2(bw, bh))) {
+        layout_custom = false;
+        begin_layout_edit();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(bx + bw + gap, by));
+    bool snap_lit = snap_enabled;   // the click below flips it, so remember what we pushed
+    if (snap_lit) {
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.34f, 0.40f, 0.02f, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.40f, 0.47f, 0.03f, 0.70f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.28f, 0.33f, 0.02f, 0.70f));
+    }
+    if (glass::button("snap", ImVec2(bw, bh))) {
+        snap_enabled = !snap_enabled;
+        save_settings();
+    }
+    if (snap_lit)
+        ImGui::PopStyleColor(3);
+
+    ImGui::SetCursorScreenPos(ImVec2((float)out_w * 0.95f - bw, by));
+    if (glass::button("done", ImVec2(bw, bh))) {
+        editing_layout = false;
+        save_settings();
+    }
+
+    if (editing_pick >= 0) {
+        if (drag_mode == 2) {
+            // the knob follows the finger the whole way even where the size cannot,
+            // so the slider never looks stuck short of its ends
+            slider_v = std::clamp((io.MousePos.x - sx) / sw, 0.0f, 1.0f);
+            float want = kScaleMin + slider_v * (kScaleMax - kScaleMin);
+            TouchPlacement keep = controls[editing_pick];
+            controls[editing_pick].scale = want;
+            if (!fit_control(editing_pick, out_w, out_h)) {
+                // only when it cannot fit at any position, then take the largest that can
+                float lo = std::min(keep.scale, want), hi = want;
+                for (int i = 0; i < 14; i++) {
+                    float mid = (lo + hi) * 0.5f;
+                    controls[editing_pick] = keep;
+                    controls[editing_pick].scale = mid;
+                    if (fit_control(editing_pick, out_w, out_h)) lo = mid; else hi = mid;
+                }
+                controls[editing_pick] = keep;
+                controls[editing_pick].scale = lo;
+                fit_control(editing_pick, out_w, out_h);
+            }
+        } else {
+            slider_v = (controls[editing_pick].scale - kScaleMin) / (kScaleMax - kScaleMin);
+        }
+
+        float th = sh * 0.42f, ty = sy + (sh - th) * 0.5f;
+        dl->AddRectFilled(ImVec2(sx, ty), ImVec2(sx + sw, ty + th),
+                          IM_COL32(38, 44, 3, 255), th * 0.5f);
+        dl->AddRectFilled(ImVec2(sx, ty), ImVec2(sx + sw * slider_v, ty + th),
+                          IM_COL32(87, 102, 5, 255), th * 0.5f);
+        dl->AddCircleFilled(ImVec2(sx + sw * slider_v, ty + th * 0.5f), sh * 0.42f,
+                            IM_COL32(255, 255, 255, 255), 24);
+    }
+
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::Render();
+    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+    SDL_RenderPresent(renderer);
+    pace(kGbFps);
 }
 
 #endif // GB_MOBILE
