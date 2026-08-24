@@ -89,6 +89,21 @@ void Memory::write_mbc1(uint16_t address, uint8_t value) {
     }
 }
 
+// mbc2 picks its register from address bit 8 rather than from the address range, and
+// its ram is 512 nibbles built into the mapper instead of sitting in the cartridge
+void Memory::write_mbc2(uint16_t address, uint8_t value) {
+    if (address >= 0x4000)
+        return;
+
+    if (address & 0x0100) {
+        rom_bank = value & 0x0F;
+        if (rom_bank == 0)
+            rom_bank = 1;
+    } else {
+        ram_enabled = ((value & 0x0F) == 0x0A);
+    }
+}
+
 void Memory::write_mbc3(uint16_t address, uint8_t value) {
     if (address >= 0x0000 && address <= 0x1FFF) {
         ram_enabled = ((value & 0x0F) == 0x0A);
@@ -179,6 +194,8 @@ uint8_t Memory::read(uint16_t address) {
     if (address >= 0xA000 && address <= 0xBFFF) {
         if (!ram_enabled || external_ram.empty())
             return 0xFF;
+        if (mbc_type == MbcType::MBC2)
+            return external_ram[(address - 0xA000) & 0x01FF] | 0xF0;
         uint8_t bank;
         if (mbc_type == MbcType::MBC1)
             bank = (banking_mode == 1) ? upper_bank : 0;
@@ -240,9 +257,10 @@ void Memory::write(uint16_t address, uint8_t value) {
     if (address < 0x8000) {
         switch (mbc_type) {
             case MbcType::MBC1: write_mbc1(address, value); break;
+            case MbcType::MBC2: write_mbc2(address, value); break;
             case MbcType::MBC3: write_mbc3(address, value); break;
             case MbcType::MBC5: write_mbc5(address, value); break;
-            // NONE and MBC2 means ignoring cartridge writes
+            // NONE means there is nothing to bank
             default: break;
         }
         return;
@@ -252,6 +270,11 @@ void Memory::write(uint16_t address, uint8_t value) {
     if (address >= 0xA000 && address <= 0xBFFF) {
         if (!ram_enabled || external_ram.empty())
             return;
+        if (mbc_type == MbcType::MBC2) {
+            external_ram[(address - 0xA000) & 0x01FF] = value & 0x0F;
+            ram_dirty = true;
+            return;
+        }
         uint8_t bank;
         if (mbc_type == MbcType::MBC1)
             bank = (banking_mode == 1) ? upper_bank : 0;
@@ -345,6 +368,9 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
             has_battery = false;
             break;
     }
+
+    if (mbc >= 0x05 && mbc <= 0x06)
+        external_ram.resize(512);
 
     if (mbc == 0x00)
         mbc_type = MbcType::NONE;

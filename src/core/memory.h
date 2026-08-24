@@ -63,6 +63,7 @@ public:
     void oam_corrupt_read_inc(int row);
 
     void write_mbc1(uint16_t address, uint8_t value);
+    void write_mbc2(uint16_t address, uint8_t value);
     void write_mbc3(uint16_t address, uint8_t value);
     void write_mbc5(uint16_t address, uint8_t value);
     void sync_div(uint8_t value);
