@@ -332,8 +332,14 @@ uint8_t Cpu::set_bit(uint8_t bit_position, uint8_t value) { // helper for the 's
 }
 
 void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
+    uint8_t index = 0;
     while (cycles)
     {
+        index++;
+        tima_reloaded = false;
+        if (bus_kind != BUS_NONE && index == bus_at && !bus_late)
+            do_bus();
+
         if (mem.div_reset) {
             internal_div = 0;
             mem.div_reset = false;
@@ -376,6 +382,7 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         if (tima_reload_delay > 0 && --tima_reload_delay == 0) {
             mem.write_direct(0xFF05, mem.read_direct(0xFF06));                // TIMA = TMA
             mem.write_direct(0xFF0F, mem.read_direct(0xFF0F) | 0x04);         // timer IRQ
+            tima_reloaded = true;
         }
 
         if (last_and_result && !and_result) {
@@ -398,6 +405,10 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         ppu.step(1);
         apu.step(1);
         mem.step_dma();
+
+        if (bus_kind != BUS_NONE && index == bus_at && bus_late)
+            do_bus();
+
         cycles--;
         total_cycles++;
     }
@@ -426,14 +437,39 @@ void Cpu::sp_step(int delta) {
     SP = (uint16_t)(SP + delta);
 }
 
+void Cpu::do_bus() {
+    if (bus_kind == BUS_READ) {
+        bus_result = mem.read(bus_addr);
+    } else if (bus_kind == BUS_WRITE) {
+        // tma has already been latched into tima on this cycle, the cpu's write is lost
+        if (bus_addr == 0xFF05 && tima_reloaded) {
+            // dropped
+        } else {
+            mem.write(bus_addr, bus_val);
+            // and a tma written on that same cycle is what the reload picks up
+            if (bus_addr == 0xFF06 && tima_reloaded)
+                mem.write_direct(0xFF05, bus_val);
+        }
+    }
+    bus_kind = BUS_NONE;
+}
+
 uint8_t Cpu::read_and_tick(uint16_t address) {
+    bus_kind = BUS_READ;
+    bus_addr = address;
+    bus_at = 4;
     tick(4);
-    return mem.read(address);
+    do_bus();                // in case the group was shorter than bus_at
+    return bus_result;
 }
 
 void Cpu::write_and_tick(uint16_t address, uint8_t value) {
+    bus_kind = BUS_WRITE;
+    bus_addr = address;
+    bus_val = value;
+    bus_at = 4;
     tick(4);
-    mem.write(address, value);
+    do_bus();
 }
 
 uint8_t Cpu::step() {

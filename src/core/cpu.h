@@ -51,6 +51,18 @@ public:
     bool last_apu_bit = false;    // bit 12 of internal_div from last t-cycle, clocks the frame sequencer
     uint8_t tima_reload_delay = 0;
     void tick(uint8_t cycles);
+
+    // the memory access an instruction is performing, carried into tick so the bus
+    // transaction can land on a chosen t-cycle instead of after the whole m-cycle
+    enum BusKind { BUS_NONE = 0, BUS_READ, BUS_WRITE };
+    uint8_t bus_kind = BUS_NONE;
+    uint16_t bus_addr = 0;
+    uint8_t bus_val = 0;
+    uint8_t bus_result = 0;
+    uint8_t bus_at = 4;      // which t-cycle of the group it lands on, 1 based
+    bool bus_late = true;    // after that cycle's peripheral work rather than before
+    bool tima_reloaded = false;   // the reload fired on this t-cycle, a write now is dropped
+    void do_bus();
     void oam_bug(uint16_t address, bool read);
     void sp_step(int delta);
     void oam_bug_read_inc(uint16_t address);
