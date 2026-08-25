@@ -788,10 +788,9 @@ void App::draw_settings(float w, float h) {
 #endif
 
     float pad = 22.0f * ui, tab_h = 32.0f * ui, tab_gap = 8.0f * ui, close_h = 40.0f * ui;
-    float tab_w = 0.0f;
+    float tab_text = 0.0f;
     for (int i = 0; i < kSettingsTabCount; i++)
-        tab_w = std::max(tab_w, ImGui::CalcTextSize(kSettingsNames[i]).x);
-    tab_w += 34.0f * ui;
+        tab_text = std::max(tab_text, ImGui::CalcTextSize(kSettingsNames[i]).x);
 
     float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
 #if GB_MOBILE
@@ -815,8 +814,13 @@ void App::draw_settings(float w, float h) {
         ImVec2 ws = ImGui::GetWindowSize();
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
+        float tab_room = ws.x - 26.0f * ui * 2.0f - tab_gap * (kSettingsTabCount - 1);
+        float tab_w    = std::min(tab_text + 34.0f * ui, tab_room / kSettingsTabCount);
+        float strip_w  = tab_w * kSettingsTabCount + tab_gap * (kSettingsTabCount - 1);
+        float tab_x0   = wp.x + (ws.x - strip_w) * 0.5f;
+
         for (int i = 0; i < kSettingsTabCount; i++) {
-            float tx = wp.x + 26.0f * ui + i * (tab_w + tab_gap);
+            float tx = tab_x0 + i * (tab_w + tab_gap);
             ImGui::SetCursorScreenPos(ImVec2(tx, wp.y));
             ImGui::PushID(i);
             bool clicked = ImGui::InvisibleButton("##tab", ImVec2(tab_w, tab_h));
@@ -833,8 +837,10 @@ void App::draw_settings(float w, float h) {
             glass::rect(dl, ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h),
                         12.0f * ui, ImDrawFlags_RoundCornersTop);
             ImVec2 ts = ImGui::CalcTextSize(kSettingsNames[i]);
+            dl->PushClipRect(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h), true);
             dl->AddText(ImVec2(tx + (tab_w - ts.x) * 0.5f, wp.y + (tab_h - ts.y) * 0.5f),
                         IM_COL32(0xE6, 0xED, 0xC7, 255), kSettingsNames[i]);
+            dl->PopClipRect();
         }
 
         dl->AddRectFilled(ImVec2(wp.x, wp.y + tab_h), ImVec2(wp.x + ws.x, wp.y + ws.y),
