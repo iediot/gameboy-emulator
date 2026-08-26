@@ -1,3 +1,8 @@
+// the same version.txt the cmake build reads, so no platform can drift from another
+def gbVersion = new File(rootDir, '../version.txt').text.trim()
+def gbParts = gbVersion.tokenize('.')
+def gbVersionCode = gbParts[0].toInteger() * 10000 + gbParts[1].toInteger() * 100 + gbParts[2].toInteger()
+
 apply plugin: 'com.android.application'
 
 def repoRoot = file('../..')
@@ -11,8 +16,8 @@ android {
         applicationId "com.iediot.gbemu"
         minSdk 21
         targetSdk 35
-        versionCode 1
-        versionName "1.0"
+        versionCode gbVersionCode
+        versionName gbVersion
 
         externalNativeBuild {
             cmake {
@@ -42,6 +47,33 @@ android {
         noCompress 'gb', 'png'
     }
 
+    /* the release key is used when its passwords are in the environment, which is how
+       both the workflow and tools/package-release.sh drive it. with nothing set the
+       release variant stays unsigned on purpose, so it fails loudly rather than
+       handing back an apk android will refuse to install */
+    /* passwords come from android/keystore.properties locally and from the environment
+       on ci. neither is ever committed, keystore.properties is gitignored beside the
+       keystore itself */
+    def gbProps = new Properties()
+    def gbPropsFile = new File(rootDir, 'keystore.properties')
+    if (gbPropsFile.exists()) {
+        gbPropsFile.withInputStream { gbProps.load(it) }
+    }
+    def gbStorePass = gbProps.getProperty('storePassword') ?: System.getenv('GB_STORE_PASSWORD')
+    def gbKeyAlias  = gbProps.getProperty('keyAlias')      ?: System.getenv('GB_KEY_ALIAS')
+    def gbKeyPass   = gbProps.getProperty('keyPassword')   ?: System.getenv('GB_KEY_PASSWORD')
+    def gbKeystore  = new File(rootDir, gbProps.getProperty('storeFile') ?: 'keystore.jks')
+    signingConfigs {
+        if (gbStorePass && gbKeystore.exists()) {
+            release {
+                storeFile gbKeystore
+                storePassword gbStorePass
+                keyAlias gbKeyAlias ?: 'gbemu'
+                keyPassword gbKeyPass ?: gbStorePass
+            }
+        }
+    }
+
     buildTypes {
         debug {
             // the ndk defaults a debug variant to -O0, which is far too slow to emulate
@@ -53,6 +85,9 @@ android {
             }
         }
         release {
+            if (gbStorePass && gbKeystore.exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -78,10 +113,14 @@ def stageGbAssets = tasks.register('stageGbAssets', Copy) {
         into 'artworks/gbc'
         include '*.png'
     }
-    from(new File(repoRoot, 'roms/game-roms')) {
-        into 'game-roms'
-        include '*.gb'
-        include '*.gbc'
+    // roms are NOT packed by default, a published apk must not carry commercial
+    // cartridges. -PgbBundleRoms=true is for personal device builds only
+    if (project.hasProperty('gbBundleRoms') && project.property('gbBundleRoms') == 'true') {
+        from(new File(repoRoot, 'roms/game-roms')) {
+            into 'game-roms'
+            include '*.gb'
+            include '*.gbc'
+        }
     }
 }
 
@@ -101,8 +140,13 @@ def writeGbManifests = tasks.register('writeGbManifests') {
     }
 }
 
+/* anything that reads the staged asset tree has to run after it is written. the merge
+   tasks are the obvious ones, but lint vital reads it too and only runs on a release
+   build, so without this assembleRelease fails a gradle dependency check that
+   assembleDebug never triggers */
 tasks.configureEach { t ->
-    if (t.name.startsWith('merge') && t.name.endsWith('Assets')) {
+    if ((t.name.startsWith('merge') && t.name.endsWith('Assets')) ||
+        t.name.toLowerCase().contains('lint')) {
         t.dependsOn writeGbManifests
     }
 }

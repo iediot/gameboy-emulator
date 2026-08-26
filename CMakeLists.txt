@@ -2,7 +2,18 @@ cmake_minimum_required(VERSION 3.20)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment version")
 
-project(gameboy_emu CXX C)
+# one source of truth for the version, read by gradle too so no platform can drift
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/version.txt GB_VERSION)
+string(STRIP "${GB_VERSION}" GB_VERSION)
+
+project(gameboy_emu VERSION ${GB_VERSION} LANGUAGES CXX C)
+
+# a monotonic build number for the bundles, 1.2.3 -> 10203
+string(REPLACE "." ";" GB_VER_PARTS "${GB_VERSION}")
+list(GET GB_VER_PARTS 0 GB_VER_MAJOR)
+list(GET GB_VER_PARTS 1 GB_VER_MINOR)
+list(GET GB_VER_PARTS 2 GB_VER_PATCH)
+math(EXPR GB_BUILD "${GB_VER_MAJOR} * 10000 + ${GB_VER_MINOR} * 100 + ${GB_VER_PATCH}")
 
 set(CMAKE_CXX_STANDARD 20)
 

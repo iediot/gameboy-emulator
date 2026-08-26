@@ -13,6 +13,7 @@ android/app/.cxx/
 android/local.properties
 android/.idea/
 android/keystore.jks
+android/keystore.properties
 
 # audio captures from test runs
 *.wav
@@ -21,3 +22,8 @@ android/keystore.jks
 # so it is carved back out
 roms/*
 !roms/test-roms
+
+# packaged build artifacts, the manifest beside them is committed instead
+releases/
+build-release/
+build-ios-rel/

@@ -1,3 +1,7 @@
+# the version lands in the bundles from version.txt, so the plists are generated
+configure_file(${GB_ROOT_DIR}/ios/Info.plist.in ${CMAKE_BINARY_DIR}/ios-Info.plist @ONLY)
+configure_file(${GB_ROOT_DIR}/mac/Info.plist.in ${CMAKE_BINARY_DIR}/mac-Info.plist @ONLY)
+
 # emulator core plus the sdl frontend, shared by every platform
 set(GB_SOURCES
         main.cpp
@@ -26,9 +30,13 @@ if(GB_ANDROID)
     target_link_libraries(gameboy_emu PRIVATE GLESv2 log android)
 elseif(GB_IOS)
     # roms, covers and the bezel are staged into the app bundle, read back at runtime via SDL_GetBasePath
+    # roms are NOT bundled by default: a published build must not carry commercial
+    # cartridges. -DGB_BUNDLE_ROMS=ON is for personal device builds only
     set(GB_RESOURCES ${GB_ASSETS_DIR}/sprites/cartridge.png
-            ${GB_ASSETS_DIR}/artworks
-            ${GB_ROMS_DIR}/game-roms)
+            ${GB_ASSETS_DIR}/artworks)
+    if(GB_BUNDLE_ROMS)
+        list(APPEND GB_RESOURCES ${GB_ROMS_DIR}/game-roms)
+    endif()
 
     # asset catalog holding the app icon, xcode runs actool on it during the build
     set(GB_ICON_ASSETS ${GB_ROOT_DIR}/ios/Assets.xcassets)
@@ -44,7 +52,7 @@ elseif(GB_IOS)
     # phone, so the debug build is optimised too and only keeps its symbols
     set_target_properties(gameboy_emu PROPERTIES
             "XCODE_ATTRIBUTE_GCC_OPTIMIZATION_LEVEL[variant=Debug]" "2"
-            MACOSX_BUNDLE_INFO_PLIST ${GB_ROOT_DIR}/ios/Info.plist
+            MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/ios-Info.plist
             XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.iediot.gbemu"
             XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
             XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES")
@@ -70,12 +78,15 @@ else()
                 ${GB_ASSETS_DIR}/sprites/cartridge.png
                 ${GB_ASSETS_DIR}/sprites/icon-mac-light.png
                 ${GB_ASSETS_DIR}/sprites/icon-mac-dark.png
-                ${GB_ASSETS_DIR}/artworks
-                ${GB_ROMS_DIR}/game-roms)
+                ${GB_ASSETS_DIR}/artworks)
+        # as on ios, roms only ride along for a personal build
+        if(GB_BUNDLE_ROMS)
+            list(APPEND GB_MAC_ASSETS ${GB_ROMS_DIR}/game-roms)
+        endif()
         add_executable(gameboy_emu MACOSX_BUNDLE ${GB_SOURCES} ${GB_MAC_ASSETS})
         set_source_files_properties(${GB_MAC_ASSETS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         set_target_properties(gameboy_emu PROPERTIES
-                MACOSX_BUNDLE_INFO_PLIST ${GB_ROOT_DIR}/mac/Info.plist)
+                MACOSX_BUNDLE_INFO_PLIST ${CMAKE_BINARY_DIR}/mac-Info.plist)
     else()
         add_executable(gameboy_emu ${GB_SOURCES})
     endif()

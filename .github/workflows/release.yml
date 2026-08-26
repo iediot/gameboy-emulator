@@ -1,0 +1,115 @@
+# Builds the release artifacts and attaches them to a GitHub release.
+# Triggered by pushing a version tag, or by hand from the Actions tab.
+#
+# Linux cannot be built on a mac, which is the whole reason this exists.
+# iOS is not built here: an unsigned .ipa is produced locally with
+# tools/package-release.sh, since signing on CI needs certificates in secrets.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-image-dev \
+                                  libgtk-3-dev
+      - name: build
+        run: |
+          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+      - name: package
+        run: |
+          VER=$(tr -d '[:space:]' < version.txt)
+          mkdir -p out
+          tar -czf "out/gameboy-emu-$VER-linux-x86_64.tar.gz" -C build gameboy-emu
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: out/* }
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: install deps
+        run: brew install sdl2 sdl2_image
+      - name: build
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+      - name: package
+        run: |
+          VER=$(tr -d '[:space:]' < version.txt)
+          mkdir -p out
+          ditto -c -k --keepParent --sequesterRsrc \
+                build/gameboy-emu.app "out/gameboy-emu-$VER-macos-arm64.zip"
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: out/* }
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      # signs with the real key when the secrets are set, otherwise falls back to the
+      # debug key so a release can still be cut without them. the check is done in the
+      # shell, the secrets context is not available to a step level if
+      - name: build
+        env:
+          GB_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GB_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          GB_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          GB_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$GB_KEYSTORE_BASE64" ] && [ -n "$GB_STORE_PASSWORD" ]; then
+            echo "$GB_KEYSTORE_BASE64" | base64 -d > android/keystore.jks
+            echo "signing with the release key"
+            ( cd android && ./gradlew assembleRelease )
+          else
+            echo "no signing secrets, falling back to the debug key"
+            unset GB_STORE_PASSWORD
+            ( cd android && ./gradlew assembleDebug )
+          fi
+      - name: package
+        run: |
+          VER=$(tr -d '[:space:]' < version.txt)
+          mkdir -p out
+          # never ship app-release-unsigned.apk, android cannot install it
+          APK=$(find android/app/build/outputs/apk -name '*.apk' ! -name '*unsigned*' | head -1)
+          if [ -z "$APK" ]; then echo "no installable apk was produced"; exit 1; fi
+          cp "$APK" "out/gameboy-emu-$VER-android.apk"
+      - uses: actions/upload-artifact@v4
+        with: { name: android, path: out/* }
+
+  publish:
+    needs: [linux, macos, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: staged }
+      - name: collect and checksum
+        run: |
+          mkdir -p releases
+          find staged -type f -exec cp {} releases/ \;
+          python3 tools/write-manifest.py
+          ls -lh releases
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: releases/*
+          body_path: releases.json
+          generate_release_notes: true
