@@ -288,11 +288,30 @@ void App::init_paths() {
                                                std::filesystem::copy_options::skip_existing, ec);
         }
     } else {
-        cartridge_path  = "../assets/sprites/cartridge.png";
-        icon_light_path = "../assets/sprites/icon-mac-light.png";
-        icon_dark_path  = "../assets/sprites/icon-mac-dark.png";
-        artwork_folder  = "../assets/artworks/";
-        rom_folder      = "../roms/game-roms/";
+        /* an installed build carries its assets next to the executable, which is the
+           only layout a packaged linux tarball can rely on. a build run straight out of
+           the source tree still finds them one level up, so running from the ide is
+           unchanged. roms go to the writable pref path when installed, since nothing
+           may be written back into an install directory */
+        std::string exe;
+        char* eb = SDL_GetBasePath();
+        if (eb) { exe = eb; SDL_free(eb); }
+
+        std::error_code aec;
+        if (!exe.empty() && std::filesystem::exists(exe + "assets/artworks", aec)) {
+            cartridge_path  = exe + "assets/sprites/cartridge.png";
+            icon_light_path = exe + "assets/sprites/icon-mac-light.png";
+            icon_dark_path  = exe + "assets/sprites/icon-mac-dark.png";
+            artwork_folder  = exe + "assets/artworks/";
+            rom_folder      = p + "game-roms/";
+            std::filesystem::create_directories(rom_folder, aec);
+        } else {
+            cartridge_path  = "../assets/sprites/cartridge.png";
+            icon_light_path = "../assets/sprites/icon-mac-light.png";
+            icon_dark_path  = "../assets/sprites/icon-mac-dark.png";
+            artwork_folder  = "../assets/artworks/";
+            rom_folder      = "../roms/game-roms/";
+        }
     }
 #endif
 }

@@ -32,8 +32,16 @@ jobs:
       - name: package
         run: |
           VER=$(tr -d '[:space:]' < version.txt)
-          mkdir -p out
-          tar -czf "out/gameboy-emu-$VER-linux-x86_64.tar.gz" -C build gameboy-emu
+          # the binary alone is useless, it resolves its covers and sprites next to
+          # itself, so the tarball has to carry them
+          STAGE="gameboy-emu-$VER-linux-x86_64"
+          mkdir -p "out" "$STAGE/assets"
+          cp build/gameboy-emu "$STAGE/"
+          cp -R assets/artworks "$STAGE/assets/"
+          mkdir -p "$STAGE/assets/sprites"
+          cp assets/sprites/cartridge.png assets/sprites/icon-mac-light.png \
+             assets/sprites/icon-mac-dark.png "$STAGE/assets/sprites/"
+          tar -czf "out/$STAGE.tar.gz" "$STAGE"
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: out/* }
 
@@ -111,5 +119,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: releases/*
-          body_path: releases.json
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
