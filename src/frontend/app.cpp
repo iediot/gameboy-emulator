@@ -528,8 +528,13 @@ void App::run() {
             // step until a frame is ready
             // the settings panel pauses the game rather than running it underneath
             if (!settings_open) {
+                /* the cap is the safety net for a frame that never lands, which is what
+                   happens whenever the lcd is off. in double speed the cpu runs twice as
+                   fast while the ppu keeps its own clock, so a frame costs twice as many
+                   cpu cycles and a fixed cap would cut every frame in half */
                 uint64_t frame_start = cpu->total_cycles;
-                while (!ppu->frame_ready && cpu->total_cycles - frame_start < 70224) {
+                while (!ppu->frame_ready &&
+                       cpu->total_cycles - frame_start < (mem->double_speed ? 140448u : 70224u)) {
                     cpu->step();
                 }
                 ppu->frame_ready = false;
