@@ -16,3 +16,8 @@ android/keystore.jks
 
 # audio captures from test runs
 *.wav
+
+# roms stay on disk but never in the repo, the test-roms submodule is only a pointer
+# so it is carved back out
+roms/*
+!roms/test-roms

@@ -16,6 +16,8 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "imgui_internal.h"
+#include "theme.h"
 #include "glass.h"
 
 // colour cartridges carry .gbc, monochrome ones .gb, both are just a rom to us
@@ -201,6 +203,7 @@ void App::pace(double fps) {
         last_present = now;
         return;
     }
+
     uint64_t target = last_present + (uint64_t)((double)freq / fps);
     while (now < target) {
         uint64_t left_ms = ((target - now) * 1000) / freq;
@@ -408,6 +411,8 @@ void App::load_settings() {
             float v; if (f >> v && v >= 0.0f && v <= 1.0f) volume = v;
         } else if (key == "cgb") {
             int v; if (f >> v) cgb_enabled = (v != 0);
+        } else if (key == "theme") {
+            int v; if (f >> v && v >= 0 && v <= 2) theme_mode = v;
         } else if (key == "dmgcolor") {
             int v; if (f >> v) dmg_colorize = (v != 0);
         } else if (key == "joystick") {
@@ -465,6 +470,7 @@ void App::save_settings() {
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
     f << "volume " << volume << "\n";
     f << "cgb " << (cgb_enabled ? 1 : 0) << "\n";
+    f << "theme " << theme_mode << "\n";
     f << "dmgcolor " << (dmg_colorize ? 1 : 0) << "\n";
 #if GB_MOBILE
     f << "joystick " << (joystick_mode ? 1 : 0) << "\n";
@@ -563,13 +569,99 @@ void App::run() {
     }
 }
 
+// a mono cart belongs to the left shelf, a colour only cart to the right, and a dual
+// mode cart sits on both because it genuinely runs on either system
+bool App::in_tab(int rom, int tab) const {
+    uint8_t mode = (rom < (int)cart_mode.size()) ? cart_mode[rom] : 0;
+    return tab == 0 ? (mode == 0 || mode == 1) : (mode == 1 || mode == 2);
+}
+
+// the rom indices belonging to whichever half of the library is on screen
+int App::library_view(std::vector<int>& out) const {
+    out.clear();
+    for (int i = 0; i < (int)rom_list.size(); i++)
+        if (in_tab(i, library_tab))
+            out.push_back(i);
+    return (int)out.size();
+}
+
+/* the library is split across a segmented pill. the indicator slides between the two
+   halves rather than cutting, and it carries the olive of the rest of the ui on the mono
+   side, easing into a muted two tone on the colour side so the shelves read apart at a
+   glance without breaking the palette */
+void App::draw_library_tabs(float cx, float cy, float pill_w, float pill_h) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float r   = pill_h * 0.5f;
+    float seg = pill_w * 0.5f;
+    ImVec2 p0(cx - pill_w * 0.5f, cy - r);
+    ImVec2 p1(cx + pill_w * 0.5f, cy + r);
+
+    for (int i = 0; i < 2; i++) {
+        ImGui::PushID(i);
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + seg * i, p0.y));
+        if (ImGui::InvisibleButton("##libtab", ImVec2(seg, pill_h)) && library_tab != i) {
+            library_tab = i;
+            carousel_pos = carousel_target = 0.0f;
+            carousel_vel = 0.0f;
+        }
+        ImGui::PopID();
+    }
+
+    dl->AddRectFilled(p0, p1, glass::fill(theme::at().surface), r);
+
+    // a frame rate independent ease so the slide feels the same on 60 and 120 hz
+    float dt = ImGui::GetIO().DeltaTime;
+    tab_slide += ((float)library_tab - tab_slide) * (1.0f - std::exp(-14.0f * dt));
+    if (std::fabs((float)library_tab - tab_slide) < 0.001f)
+        tab_slide = (float)library_tab;
+
+    float pad = pill_h * 0.10f;
+    ImVec2 i0(p0.x + pad + seg * tab_slide, p0.y + pad);
+    ImVec2 i1(i0.x + seg - pad * 2.0f, p1.y - pad);
+
+    dl->AddRectFilled(i0, i1, glass::fill(theme::at().accent), r - pad);
+    // the same field the page carries, clipped inside the indicator, so selecting the
+    // colour shelf lights the pill with it too
+    if (tab_slide > 0.002f) {
+        // blob radii scale with the area handed in, so a pill sized area gives dots.
+        // feed it something screen sized and clip back to the indicator
+        // the pill is small, so its blobs are driven off a far bigger virtual area than
+        // itself, otherwise they come out as specks rather than broad washes of colour
+        iri::field_rounded(dl, i0, i1, r - pad, (float)ImGui::GetTime(), tab_slide * 0.5f, 3.2f);
+    }
+    glass::rect(dl, i0, i1, r - pad);
+    glass::rect(dl, p0, p1, r, 0, false);
+
+    const char* names[2] = {"game boy", "color"};
+    for (int i = 0; i < 2; i++) {
+        // the label brightens as the indicator arrives under it
+        float lit = 1.0f - std::fabs(tab_slide - (float)i);
+        lit = std::max(0.0f, lit);
+        int a = (int)(120 + 135 * lit);
+        ImVec2 ts = ImGui::CalcTextSize(names[i]);
+        ImU32 tc = theme::at().text;
+        dl->AddText(ImVec2(p0.x + seg * i + (seg - ts.x) * 0.5f, cy - ts.y * 0.5f),
+                    (tc & ~IM_COL32_A_MASK) | ((ImU32)a << IM_COL32_A_SHIFT), names[i]);
+    }
+}
+
 // find the games inside the game path and the closest matching cover for each
 void App::scan_roms() {
     rom_list.clear();
     cover_list.clear();
+    cart_mode.clear();
     for (const auto& entry : std::filesystem::directory_iterator(rom_folder)) {
         if (is_rom_file(entry.path())) {
             rom_list.push_back(entry.path().filename().string());
+            /* bit 7 of the cgb flag is what the hardware itself looks at, the file
+               extension is only a hint and plenty of colour carts still end in .gb.
+               0xC0 refuses to boot on a dmg, 0x80 runs on either, and anything else is
+               a plain mono cartridge, on those this byte is still a title character */
+            uint8_t flag = 0;
+            std::ifstream hdr(entry.path(), std::ios::binary);
+            if (hdr.seekg(0x0143) && hdr.good())
+                flag = (uint8_t)hdr.get();
+            cart_mode.push_back(flag == 0xC0 ? 2 : ((flag & 0x80) ? 1 : 0));
             std::string path = closest_artwork(entry.path().stem().string());
             if (path.empty())
                 cover_list.push_back(nullptr);
@@ -697,6 +789,9 @@ void App::render_game() {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    sync_theme();
+    // the field fills the letterbox around the lcd, never the picture itself
+    draw_iridescence(io.DisplaySize.x, io.DisplaySize.y, &dst);
     draw_settings(io.DisplaySize.x, io.DisplaySize.y);
     ImGui::End();
     ImGui::PopStyleVar();
@@ -731,7 +826,7 @@ bool App::cog_button(float cx, float cy, float r) {
     bool hot = ImGui::IsItemHovered();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 green = glass::fill(hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255));
+    ImU32 green = glass::fill(hot ? theme::at().accent : theme::at().button);
     ImU32 white = IM_COL32(255, 255, 255, 255);
 
     dl->AddCircleFilled(ImVec2(cx, cy), r, green, 40);
@@ -753,7 +848,7 @@ bool App::back_button(float cx, float cy, float r) {
     bool hot = ImGui::IsItemHovered();
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 green = glass::fill(hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255));
+    ImU32 green = glass::fill(hot ? theme::at().accent : theme::at().button);
     ImU32 white = IM_COL32(255, 255, 255, 255);
 
     dl->AddCircleFilled(ImVec2(cx, cy), r, green, 40);
@@ -814,7 +909,7 @@ void App::draw_settings(float w, float h) {
 
     float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
 #if GB_MOBILE
-    int rows = 2;
+    int rows = 3;
     float pw = w * 0.86f;
 #else
     int rows = 5;
@@ -849,9 +944,9 @@ void App::draw_settings(float w, float h) {
             if (clicked) settings_tab = i;
 
             bool on = (settings_tab == i);
-            ImU32 col = glass::fill(on  ? IM_COL32(87, 102, 5, 255)
-                                    : hot ? IM_COL32(72, 84, 5, 255)
-                                          : IM_COL32(48, 56, 4, 255));
+            ImU32 col = glass::fill(on  ? theme::at().accent
+                                    : hot ? theme::at().surface_hi
+                                          : theme::at().surface);
             dl->AddRectFilled(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h + 26.0f * ui),
                               col, 12.0f * ui, ImDrawFlags_RoundCornersTop);
             glass::rect(dl, ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h),
@@ -859,20 +954,28 @@ void App::draw_settings(float w, float h) {
             ImVec2 ts = ImGui::CalcTextSize(kSettingsNames[i]);
             dl->PushClipRect(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h), true);
             dl->AddText(ImVec2(tx + (tab_w - ts.x) * 0.5f, wp.y + (tab_h - ts.y) * 0.5f),
-                        IM_COL32(0xE6, 0xED, 0xC7, 255), kSettingsNames[i]);
+                        theme::at().text, kSettingsNames[i]);
             dl->PopClipRect();
         }
 
-        dl->AddRectFilled(ImVec2(wp.x, wp.y + tab_h), ImVec2(wp.x + ws.x, wp.y + ws.y),
-                          ImGui::GetColorU32(ImGuiCol_WindowBg), 22.0f * ui);
+        ImVec2 sheet0(wp.x, wp.y + tab_h);
+        ImVec2 sheet1(wp.x + ws.x, wp.y + ws.y);
+        dl->AddRectFilled(sheet0, sheet1, theme::at().panel, 22.0f * ui);
+        // the sheet is opaque, so the field goes onto it rather than behind it
+        if (iridescence > 0.0f)
+            iri::field_rounded(dl, sheet0, sheet1, 22.0f * ui,
+                               (float)ImGui::GetTime(), iridescence * 0.5f);
 
         float inner_w = ws.x - pad * 2.0f;
         float body_y  = tab_h + pad;
         float body_h  = ws.y - body_y - pad * 2.0f - close_h;
 
         ImGui::SetCursorPos(ImVec2(pad, body_y));
+        // the smooth scrolling below drives SetScrollY itself, imgui's own bar is both
+        // redundant and picks up ChildRounding, which is what rounded off the top and
+        // bottom of the list
         ImGui::BeginChild("settings_body", ImVec2(inner_w, body_h), false,
-                          ImGuiWindowFlags_NoScrollWithMouse);
+                          ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
         ImVec2 body_min = ImGui::GetWindowPos();
         ImVec2 body_max = ImVec2(body_min.x + ImGui::GetWindowSize().x,
                                  body_min.y + ImGui::GetWindowSize().y);
@@ -915,7 +1018,7 @@ void App::draw_settings(float w, float h) {
                     pdl->PushClipRectFullScreen();
                     pdl->AddRectFilled(ImVec2(cpos.x - 1.0f, top),
                                        ImVec2(cpos.x + cw + 1.0f, bottom),
-                                       IM_COL32(33, 38, 3, 255), 8.0f,
+                                       theme::at().panel, 8.0f,
                                        ImDrawFlags_RoundCornersBottom);
 
                     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
@@ -935,13 +1038,13 @@ void App::draw_settings(float w, float h) {
                                                           : ImDrawFlags_RoundCornersNone;
                             pdl->AddRectFilled(ImVec2(cpos.x + in, y0),
                                                ImVec2(cpos.x + cw - in, y1),
-                                               hot_i ? IM_COL32(61, 71, 5, 255)
-                                                     : IM_COL32(46, 53, 4, 255), 5.0f, fl);
+                                               hot_i ? theme::at().button
+                                                     : theme::at().surface, 5.0f, fl);
                         }
                         ImVec2 its = ImGui::CalcTextSize(items[i]);
                         pdl->AddText(ImVec2(cpos.x + cw - 12.0f - its.x,
                                             ip.y + (item_h - its.y) * 0.5f),
-                                     IM_COL32(0xE6, 0xED, 0xC7, 255), items[i]);
+                                     theme::at().text, items[i]);
                         ImGui::PopID();
                     }
                     ImGui::PopStyleVar();
@@ -952,14 +1055,14 @@ void App::draw_settings(float w, float h) {
                 if (!covered) {
                     ImDrawList* fg = ImGui::GetForegroundDrawList();
                     fg->PushClipRect(body_min, body_max, true);
-                    ImU32 cbg = glass::fill(hot_c ? IM_COL32(87, 102, 5, 255)
-                                                  : IM_COL32(61, 71, 5, 255));
+                    ImU32 cbg = glass::fill(hot_c ? theme::at().accent
+                                                  : theme::at().button);
                     fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh), cbg, 8.0f);
                     glass::rect(fg, cpos, ImVec2(cpos.x + cw, cpos.y + chh), 8.0f);
                     ImVec2 cts = ImGui::CalcTextSize(items[cur]);
                     fg->AddText(ImVec2(cpos.x + cw - 12.0f - cts.x,
                                        cpos.y + (chh - cts.y) * 0.5f),
-                                IM_COL32(0xE6, 0xED, 0xC7, 255), items[cur]);
+                                theme::at().text, items[cur]);
                     fg->PopClipRect();
                 }
                 return picked;
@@ -980,8 +1083,8 @@ void App::draw_settings(float w, float h) {
                 bool hot_t = ImGui::IsItemHovered();
                 float ty = tp.y + (fh - th) * 0.5f;
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
-                ImU32 track = on ? (hot_t ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255))
-                                 : (hot_t ? IM_COL32(52, 60, 4, 255)  : IM_COL32(38, 44, 3, 255));
+                ImU32 track = on ? (hot_t ? theme::at().accent : theme::at().button)
+                                 : (hot_t ? theme::at().surface  : theme::at().panel);
                 tdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
                 float kr = th * 0.5f - 3.0f;
                 float kx = on ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
@@ -1009,11 +1112,11 @@ void App::draw_settings(float w, float h) {
                 float ty = sp.y + (fh - th) * 0.5f;
                 ImDrawList* sdl = ImGui::GetWindowDrawList();
                 sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw, ty + th),
-                                   IM_COL32(38, 44, 3, 255), th * 0.5f);
+                                   theme::at().panel, th * 0.5f);
                 if (v > 0.0f)
                     sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw * v, ty + th),
-                                       hot_s ? IM_COL32(87, 102, 5, 255)
-                                             : IM_COL32(61, 71, 5, 255), th * 0.5f);
+                                       hot_s ? theme::at().accent
+                                             : theme::at().button, th * 0.5f);
                 sdl->AddCircleFilled(ImVec2(sp.x + sw * v, ty + th * 0.5f), fh * 0.26f,
                                      IM_COL32(255, 255, 255, 255), 24);
                 return v;
@@ -1094,6 +1197,13 @@ void App::draw_settings(float w, float h) {
         }
 
         case TAB_SYSTEM: {
+            static const char* kThemeNames[3] = {"auto", "light", "dark"};
+            int tm = combo_row("theme", "##theme", kThemeNames, 3, theme_mode);
+            if (tm != theme_mode) {
+                theme_mode = tm;
+                sync_theme();
+                save_settings();
+            }
             if (toggle_row("game boy color", "##cgb", cgb_enabled)) {
                 cgb_enabled = !cgb_enabled;
                 refresh_palette();
@@ -1308,27 +1418,96 @@ void App::setup_style() {
     s.PopupBorderSize = 0.0f;
     s.WindowBorderSize = 0.0f;
 
-    ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]      = ImVec4(0.09f, 0.10f, 0.06f, 1.00f);
-    c[ImGuiCol_Button]        = ImVec4(0.24f, 0.28f, 0.02f, 0.50f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.34f, 0.40f, 0.02f, 0.50f);
-    c[ImGuiCol_ButtonActive]  = ImVec4(0.18f, 0.21f, 0.02f, 0.50f);
-    c[ImGuiCol_Text]          = ImVec4(0.90f, 0.93f, 0.78f, 1.00f);
-    c[ImGuiCol_TitleBg]       = ImVec4(0.12f, 0.14f, 0.02f, 1.00f);
-    c[ImGuiCol_TitleBgActive] = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
-    c[ImGuiCol_FrameBg]              = ImVec4(0.24f, 0.28f, 0.02f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.34f, 0.40f, 0.02f, 1.00f);
-    c[ImGuiCol_FrameBgActive]        = ImVec4(0.18f, 0.21f, 0.02f, 1.00f);
-    c[ImGuiCol_PopupBg]              = ImVec4(0.13f, 0.15f, 0.01f, 1.00f);
-    c[ImGuiCol_Header]               = ImVec4(0.34f, 0.40f, 0.02f, 1.00f);
-    c[ImGuiCol_HeaderHovered]        = ImVec4(0.40f, 0.47f, 0.03f, 1.00f);
-    c[ImGuiCol_HeaderActive]         = ImVec4(0.24f, 0.28f, 0.02f, 1.00f);
-    c[ImGuiCol_Border]               = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.78f);
-    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.09f, 0.10f, 0.06f, 1.00f);
-    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.24f, 0.28f, 0.02f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.34f, 0.40f, 0.02f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.40f, 0.47f, 0.03f, 1.00f);
+    // every widget colour is derived from the live palette so the whole ui moves at once
+    apply_theme_colors();
+}
+
+// resolves the palette for this frame and eases the colour backdrop in and out. the os
+// preference is polled rarely, reading it is a syscall and it almost never changes
+void App::sync_theme() {
+    static int poll = 0;
+    static bool os_dark = true;
+    if (poll-- <= 0) {
+        os_dark = gb_system_dark();
+        poll = 60;
+    }
+
+    bool want = (theme_mode == 0) ? os_dark : (theme_mode == 2);
+    if (want != theme_dark || theme::at().dark != want) {
+        theme_dark = want;
+        theme::use(want);
+        apply_theme_colors();
+    }
+
+    // a colour cartridge on screen, or the colour shelf in the menu
+    bool colour_ctx = (state == AppState::PLAYING) ? (mem && mem->cgb_mode)
+                                                   : (library_tab == 1);
+    float dt = ImGui::GetIO().DeltaTime;
+    iridescence += ((colour_ctx ? 1.0f : 0.0f) - iridescence) * (1.0f - std::exp(-6.0f * dt));
+    if (iridescence < 0.002f) iridescence = 0.0f;
+    if (iridescence > 0.998f) iridescence = 1.0f;
+    theme::g_iridescence = iridescence;
+}
+
+// the blob field, drawn everywhere except the lcd itself so the picture stays untouched
+void App::draw_iridescence(float w, float h, const SDL_Rect* keep_clear) {
+    if (iridescence <= 0.0f)
+        return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float t = (float)ImGui::GetTime();
+    float strength = iridescence * (theme::at().dark ? 1.0f : 0.85f);
+
+    if (!keep_clear) {
+        iri::field(dl, ImVec2(0, 0), ImVec2(w, h), t, strength);
+        return;
+    }
+    // four bands around the screen rect, so the field never paints over the game
+    float x0 = (float)keep_clear->x, y0 = (float)keep_clear->y;
+    float x1 = x0 + keep_clear->w,   y1 = y0 + keep_clear->h;
+    const ImVec2 bands[4][2] = {
+        {ImVec2(0, 0),   ImVec2(w, y0)},
+        {ImVec2(0, y1),  ImVec2(w, h)},
+        {ImVec2(0, y0),  ImVec2(x0, y1)},
+        {ImVec2(x1, y0), ImVec2(w, y1)},
+    };
+    for (int i = 0; i < 4; i++) {
+        if (bands[i][1].x - bands[i][0].x <= 0.5f || bands[i][1].y - bands[i][0].y <= 0.5f)
+            continue;
+        dl->PushClipRect(bands[i][0], bands[i][1], true);
+        iri::field(dl, ImVec2(0, 0), ImVec2(w, h), t, strength);
+        dl->PopClipRect();
+    }
+}
+
+// imgui keeps one global style, so this is re-run whenever the palette changes
+void App::apply_theme_colors() {
+    const Theme& th = theme::at();
+    auto v = [](ImU32 c, float a = 1.0f) {
+        return ImVec4(((c >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f,
+                      ((c >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f,
+                      ((c >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f, a);
+    };
+    ImVec4* c = ImGui::GetStyle().Colors;
+    c[ImGuiCol_WindowBg]             = v(th.page);
+    c[ImGuiCol_Button]               = v(th.button, 0.50f);
+    c[ImGuiCol_ButtonHovered]        = v(th.surface_hi, 0.50f);
+    c[ImGuiCol_ButtonActive]         = v(th.surface, 0.50f);
+    c[ImGuiCol_Text]                 = v(th.text);
+    c[ImGuiCol_TitleBg]              = v(th.panel);
+    c[ImGuiCol_TitleBgActive]        = v(th.surface);
+    c[ImGuiCol_FrameBg]              = v(th.surface);
+    c[ImGuiCol_FrameBgHovered]       = v(th.surface_hi);
+    c[ImGuiCol_FrameBgActive]        = v(th.button);
+    c[ImGuiCol_PopupBg]              = v(th.panel);
+    c[ImGuiCol_Header]               = v(th.surface_hi);
+    c[ImGuiCol_HeaderHovered]        = v(th.accent);
+    c[ImGuiCol_HeaderActive]         = v(th.surface);
+    c[ImGuiCol_Border]               = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0, 0, 0, 0.78f);
+    c[ImGuiCol_ScrollbarBg]          = v(th.page);
+    c[ImGuiCol_ScrollbarGrab]        = v(th.surface);
+    c[ImGuiCol_ScrollbarGrabHovered] = v(th.surface_hi);
+    c[ImGuiCol_ScrollbarGrabActive]  = v(th.accent);
 }
 
 // reduce a name to lower letters dropping parenthesis and such
@@ -1413,17 +1592,18 @@ void App::copy_bundled_rom(const std::string& name) {
 }
 #endif
 
-std::vector<std::string> App::artwork_files() {
+const std::vector<std::string>& App::artwork_files() {
+    if (!artwork_cache.empty())
+        return artwork_cache;
 #if GB_ANDROID
-    return asset_manifest("artworks.txt");
+    artwork_cache = asset_manifest("artworks.txt");
 #else
-    std::vector<std::string> out;
     std::error_code ec;
     for (const auto& e : std::filesystem::directory_iterator(artwork_folder, ec))
         if (e.path().extension() == ".png")
-            out.push_back(e.path().filename().string());
-    return out;
+            artwork_cache.push_back(e.path().filename().string());
 #endif
+    return artwork_cache;
 }
 
 std::string App::closest_artwork(const std::string& rom_name) {
@@ -1520,25 +1700,17 @@ void App::render_menu() {
         ImGui::TextUnformatted(s);
     };
 
-    ImGui::SetCursorPos(ImVec2(w * 0.03f, h * 0.05f));
-    ImGui::TextUnformatted("gameboy-emu");
+    sync_theme();
+    draw_iridescence(w, h);
+
+    // text drawn straight onto the page has to invert with it, panels keep their own
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(theme::at().text_page));
 
     std::vector<int> view;
-    for (int i = 0; i < (int)rom_list.size(); i++)
-        if ((cover_list[i] != nullptr) != show_debug)
-            view.push_back(i);
-    int count = (int)view.size();
-
-    float tog_w = w * 0.13f, tog_h = h * 0.07f;
-    ImGui::SetCursorPos(ImVec2(w - tog_w - w * 0.03f, h * 0.04f));
-    if (glass::button(show_debug ? "games" : "test roms", ImVec2(tog_w, tog_h))) {
-        show_debug = !show_debug;
-        carousel_pos = carousel_target = 0.0f;
-        carousel_vel = 0.0f;
-    }
+    int count = library_view(view);
 
     if (count == 0) {
-        centre_text(show_debug ? "no test roms" : "no games", h * 0.45f);
+        centre_text(library_tab ? "no color games" : "no game boy games", h * 0.45f);
     } else {
         float cover    = h * 0.50f;
         float cover_cx = w * 0.5f;
@@ -1551,25 +1723,30 @@ void App::render_menu() {
             if (io.MouseWheel != 0.0f) carousel_vel += (io.MouseWheel > 0.0f ? -3.5f : 3.5f);
         }
 
-        ImGui::SetCursorPos(ImVec2(0, cover_cy - cover * 0.60f));
-        ImGui::InvisibleButton("swipe", ImVec2(w, cover * 1.20f));
+        // starts below the tab pill, an overlap here silently ate every click on it
+        ImGui::SetCursorPos(ImVec2(0, cover_cy - cover * 0.50f));
+        ImGui::InvisibleButton("swipe", ImVec2(w, cover * 1.10f));
         if (ImGui::IsItemActivated()) {
             carousel_drag_start = carousel_pos;
             carousel_vel = 0.0f;
         }
+        /* a hitched frame must not throw the carousel across the shelf, and a very short
+           one must not divide into a huge flick velocity. clamping the step keeps the
+           motion even however unevenly frames actually arrive */
+        float dt = std::min(std::max(io.DeltaTime, 0.002f), 1.0f / 30.0f);
+
         if (ImGui::IsItemActive()) {
             float np = carousel_drag_start - ImGui::GetMouseDragDelta(0, 0.0f).x / spacing;
-            if (io.DeltaTime > 0.0f)
-                carousel_vel = carousel_vel * 0.3f + ((np - carousel_pos) / io.DeltaTime) * 0.7f;
+            carousel_vel = carousel_vel * 0.3f + ((np - carousel_pos) / dt) * 0.7f;
             carousel_vel = std::max(-90.0f, std::min(90.0f, carousel_vel));
             carousel_pos = np;
         } else if (std::abs(carousel_vel) > 0.4f) {
-            carousel_pos += carousel_vel * io.DeltaTime;
-            carousel_vel *= std::exp(-3.5f * io.DeltaTime);
+            carousel_pos += carousel_vel * dt;
+            carousel_vel *= std::exp(-3.5f * dt);
         } else {
             carousel_vel = 0.0f;
             float target = std::round(carousel_pos);
-            carousel_pos += (target - carousel_pos) * std::min(1.0f, io.DeltaTime * 14.0f);
+            carousel_pos += (target - carousel_pos) * std::min(1.0f, dt * 14.0f);
             if (std::abs(target - carousel_pos) < 0.001f) carousel_pos = target;
         }
 
@@ -1632,7 +1809,7 @@ void App::render_menu() {
                     dl->AddImageRounded((ImTextureID)cover_list[cd.r], a0, a1,
                                         ImVec2(0, 0), ImVec2(1, 1), tint, round);
                 } else {
-                    dl->AddRectFilled(a0, a1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
+                    dl->AddRectFilled(a0, a1, theme::at().placeholder, round);
                     std::string nm = display_name(rom_list[cd.r]);
                     ImFont* fnt = ImGui::GetFont();
                     float   fsz = ImGui::GetFontSize();
@@ -1641,7 +1818,7 @@ void App::render_menu() {
                     dl->AddText(fnt, fsz,
                                 ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
                                        (a0.y + a1.y) * 0.5f - ts.y * 0.5f),
-                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
+                                theme::at().text, nm.c_str(), nullptr, wrap);
                 }
                 continue;
             }
@@ -1684,7 +1861,7 @@ void App::render_menu() {
                 dl->AddImageRounded((ImTextureID)cover_list[cd.r], d0, d1,
                                     ImVec2(0, 0), ImVec2(1, 1), tint, round);
             } else {
-                dl->AddRectFilled(s0, s1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
+                dl->AddRectFilled(s0, s1, theme::at().placeholder, round);
                 std::string nm = display_name(rom_list[cd.r]);
                 ImFont* fnt = ImGui::GetFont();
                 float   fsz = ImGui::GetFontSize();
@@ -1693,7 +1870,7 @@ void App::render_menu() {
                 dl->AddText(fnt, fsz,
                             ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
                                    (s0.y + s1.y) * 0.5f - ts.y * 0.5f),
-                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
+                            theme::at().text, nm.c_str(), nullptr, wrap);
             }
         }
 
@@ -1750,12 +1927,19 @@ void App::render_menu() {
     if (glass::button("add game", ImVec2(add_w, h * 0.07f)))
         add_game();
 
+    // submitted last so it wins the hover over the swipe strip it overlaps
+    draw_library_tabs(w * 0.5f, h * 0.052f, std::min(w * 0.34f, 320.0f), h * 0.055f);
+
+    ImGui::PopStyleColor();
     draw_settings(w, h);
 
     ImGui::End();
     ImGui::PopStyleVar(3);
     ImGui::Render();
-    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0f, 0xFF);
+    { ImU32 bg = theme::at().page;
+      SDL_SetRenderDrawColor(renderer, (bg >> IM_COL32_R_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_G_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_B_SHIFT) & 0xFF, 0xFF); }
     SDL_RenderClear(renderer);
     SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);

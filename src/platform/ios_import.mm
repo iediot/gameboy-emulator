@@ -71,4 +71,12 @@ extern "C" bool gb_take_import_done() {
     return false;
 }
 
+
+bool gb_system_dark() {
+    if (@available(iOS 13.0, *))
+        return UITraitCollection.currentTraitCollection.userInterfaceStyle ==
+               UIUserInterfaceStyleDark;
+    return false;
+}
+
 #endif // TARGET_OS_IPHONE

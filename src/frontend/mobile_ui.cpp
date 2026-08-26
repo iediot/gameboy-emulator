@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include "app.h"
+#include "theme.h"
 #include "glass.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -183,24 +184,6 @@ namespace {
         return MASK_NONE;
     }
 
-    // same shape and palette as the cog and back buttons so the header reads as a pair
-    bool letter_button(float cx, float cy, float r, const char* label) {
-        ImGui::SetCursorScreenPos(ImVec2(cx - r, cy - r));
-        bool clicked = ImGui::InvisibleButton("##category", ImVec2(r * 2.0f, r * 2.0f));
-        bool hot = ImGui::IsItemHovered();
-
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 bg = glass::fill(hot ? IM_COL32(87, 102, 5, 255) : IM_COL32(61, 71, 5, 255));
-        dl->AddCircleFilled(ImVec2(cx, cy), r, bg, 40);
-        glass::circle(dl, ImVec2(cx, cy), r);
-        ImFont* font = ImGui::GetFont();
-        float   size = r * 1.05f;
-        ImVec2  ts   = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
-        dl->AddText(font, size, ImVec2(cx - ts.x * 0.5f, cy - ts.y * 0.5f),
-                    IM_COL32(255, 255, 255, 255), label);
-        return clicked;
-    }
-
     void centred_label(ImDrawList* dl, ImVec2 c, float size, const char* text) {
         ImFont* font = ImGui::GetFont();
         ImVec2  ts   = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
@@ -310,7 +293,10 @@ void App::render_game_mobile() {
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
     Layout l = layout_for(out_w, out_h, layout_custom ? controls : nullptr);
 
-    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0d, 0xFF);
+    { ImU32 bg = theme::at().page;
+      SDL_SetRenderDrawColor(renderer, (bg >> IM_COL32_R_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_G_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_B_SHIFT) & 0xFF, 0xFF); }
     SDL_RenderClear(renderer);
 
     bool held[8] = {};
@@ -336,6 +322,10 @@ void App::render_game_mobile() {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    sync_theme();
+    // drawn first so the lcd and the joypad both sit on top of the field
+    draw_iridescence(io.DisplaySize.x, io.DisplaySize.y);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float inset = out_w * 0.018f;
@@ -384,10 +374,13 @@ void App::render_menu_mobile() {
                 break;
             }
         if (r_new >= 0) {
-            show_debug = (cover_list[r_new] == nullptr); // jump to whichever list the new rom lands in
+            // a dual mode cart is on both shelves, so only move if the current one
+            // would not show it at all
+            if (!in_tab(r_new, library_tab))
+                library_tab = in_tab(r_new, 0) ? 0 : 1;
             int local = 0;
             for (int i = 0; i < r_new; i++)
-                if ((cover_list[i] != nullptr) != show_debug)
+                if (in_tab(i, library_tab))
                     local++;
             carousel_pos = carousel_target = (float)local; carousel_vel = 0.0f;
         } else {
@@ -436,28 +429,24 @@ void App::render_menu_mobile() {
         ImGui::TextUnformatted(s);
     };
 
-    ImGui::SetCursorPos(ImVec2(0, h * 0.09f)); // low enough to clear the dynamic island
-    centre_text("gameboy-emu");
+    sync_theme();
+    draw_iridescence(w, h);
 
-    // split the library: games have cover art, debug/test roms do not; a button flips between them
+    // text drawn straight onto the page has to invert with it, panels keep their own
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(theme::at().text_page));
+
+    // the library is split by cartridge type, the pill sits centred in the header row
+    // with the cog opposite it on the right
     std::vector<int> view;
-    for (int i = 0; i < (int)rom_list.size(); i++)
-        if ((cover_list[i] != nullptr) != show_debug)
-            view.push_back(i);
-    int count = (int)view.size();
+    int count = library_view(view);
 
-    // category toggle on the left of the header, the cog sits opposite it on the right:
-    // "d" for the debug/test roms, "g" for games
     float hdr_r = std::max(w, h) * 0.0245f;
     float hdr_y = hdr_r * 2.4f + h * 0.03f;
-    if (letter_button(hdr_r * 1.55f, hdr_y, hdr_r, show_debug ? "g" : "d")) {
-        show_debug = !show_debug;
-        carousel_pos = carousel_target = 0.0f; carousel_vel = 0.0f;
-    }
+    draw_library_tabs(w * 0.5f, hdr_y, w * 0.56f, hdr_r * 1.6f);
 
     if (count == 0) {
         ImGui::SetCursorPos(ImVec2(0, h * 0.45f));
-        centre_text(show_debug ? "no debug roms" : "no games bundled");
+        centre_text(library_tab ? "no color games" : "no game boy games");
     } else {
         // vertical card stack, the selected game on top, swiping shuffles through and wraps around
         float cover = w * 0.58f;      // size of the top card
@@ -547,7 +536,7 @@ void App::render_menu_mobile() {
                     dl->AddImageRounded((ImTextureID)cover_list[cd.r], a0, a1,
                                         ImVec2(0, 0), ImVec2(1, 1), tint, round);
                 } else {
-                    dl->AddRectFilled(a0, a1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
+                    dl->AddRectFilled(a0, a1, theme::at().placeholder, round);
                     std::string nm = display_name(rom_list[cd.r]);
                     ImFont* fnt = ImGui::GetFont();
                     float   fsz = ImGui::GetFontSize();
@@ -556,7 +545,7 @@ void App::render_menu_mobile() {
                     dl->AddText(fnt, fsz,
                                 ImVec2((a0.x + a1.x) * 0.5f - ts.x * 0.5f,
                                        (a0.y + a1.y) * 0.5f - ts.y * 0.5f),
-                                IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
+                                theme::at().text, nm.c_str(), nullptr, wrap);
                 }
                 continue;
             }
@@ -597,7 +586,7 @@ void App::render_menu_mobile() {
                 dl->AddImageRounded((ImTextureID)cover_list[cd.r], d0, d1,
                                     ImVec2(0, 0), ImVec2(1, 1), tint, round);
             } else {
-                dl->AddRectFilled(s0, s1, IM_COL32(0x3d, 0x47, 0x03, 255), round);
+                dl->AddRectFilled(s0, s1, theme::at().placeholder, round);
                 std::string nm = display_name(rom_list[cd.r]);
                 ImFont* fnt = ImGui::GetFont();
                 float   fsz = ImGui::GetFontSize();
@@ -606,7 +595,7 @@ void App::render_menu_mobile() {
                 dl->AddText(fnt, fsz,
                             ImVec2((s0.x + s1.x) * 0.5f - ts.x * 0.5f,
                                    (s0.y + s1.y) * 0.5f - ts.y * 0.5f),
-                            IM_COL32(0xE6, 0xED, 0xC7, 255), nm.c_str(), nullptr, wrap);
+                            theme::at().text, nm.c_str(), nullptr, wrap);
             }
         }
 
@@ -670,12 +659,16 @@ void App::render_menu_mobile() {
         gb_present_document_picker(rom_folder.c_str());
     }
 
+    ImGui::PopStyleColor();
     draw_settings(w, h);
 
     ImGui::End();
     ImGui::PopStyleVar(3);
     ImGui::Render();
-    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0f, 0xFF); // menu background, so any edge blends in
+    { ImU32 bg = theme::at().page;   // menu background, so any edge blends in
+      SDL_SetRenderDrawColor(renderer, (bg >> IM_COL32_R_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_G_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_B_SHIFT) & 0xFF, 0xFF); }
     SDL_RenderClear(renderer);
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
     SDL_RenderPresent(renderer);
@@ -830,7 +823,10 @@ void App::render_layout_editor() {
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
     Layout l = layout_for(out_w, out_h, controls);
 
-    SDL_SetRenderDrawColor(renderer, 0x17, 0x1a, 0x0d, 0xFF);
+    { ImU32 bg = theme::at().page;
+      SDL_SetRenderDrawColor(renderer, (bg >> IM_COL32_R_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_G_SHIFT) & 0xFF,
+                             (bg >> IM_COL32_B_SHIFT) & 0xFF, 0xFF); }
     SDL_RenderClear(renderer);
 
     ImGui_ImplSDLRenderer2_NewFrame();
@@ -1039,9 +1035,9 @@ void App::render_layout_editor() {
 
         float th = sh * 0.42f, ty = sy + (sh - th) * 0.5f;
         dl->AddRectFilled(ImVec2(sx, ty), ImVec2(sx + sw, ty + th),
-                          IM_COL32(38, 44, 3, 255), th * 0.5f);
+                          theme::at().panel, th * 0.5f);
         dl->AddRectFilled(ImVec2(sx, ty), ImVec2(sx + sw * slider_v, ty + th),
-                          IM_COL32(87, 102, 5, 255), th * 0.5f);
+                          theme::at().accent, th * 0.5f);
         dl->AddCircleFilled(ImVec2(sx + sw * slider_v, ty + th * 0.5f), sh * 0.42f,
                             IM_COL32(255, 255, 255, 255), 24);
     }

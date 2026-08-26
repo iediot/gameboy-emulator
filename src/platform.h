@@ -35,4 +35,7 @@
     #define GB_DESKTOP 1
 #endif
 
+// whether the os is currently in dark appearance, false when it cannot be determined
+bool gb_system_dark();
+
 #endif //GAMEBOY_EMU_PLATFORM_H

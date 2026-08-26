@@ -75,7 +75,22 @@ private:
     float carousel_drag_start = 0.0f;
     float carousel_target = 0.0f;
     float carousel_vel = 0.0f;
-    bool show_debug = false;
+    // the library is split by cartridge type, 0 is game boy and 1 is game boy color
+    int library_tab = 0;
+    float tab_slide = 0.0f;      // eased position of the pill indicator
+    // per rom: 0 dmg only, 1 dual, 2 colour only. a dual cartridge runs on both systems
+    // so it earns a place on both shelves
+    std::vector<uint8_t> cart_mode;
+    bool in_tab(int rom, int tab) const;
+    // 0 follows the os, 1 forces light, 2 forces dark
+    int theme_mode = 0;
+    bool theme_dark = true;
+    void apply_theme_colors();
+    void sync_theme();
+    void draw_iridescence(float w, float h, const SDL_Rect* keep_clear = nullptr);
+    float iridescence = 0.0f;      // eased, 1 while a colour context is on screen
+    void draw_library_tabs(float cx, float cy, float pill_w, float pill_h);
+    int library_view(std::vector<int>& out) const;
     ScaleMode scale_mode = ScaleMode::NORMAL;
     bool settings_open = false;
     int settings_tab = 0;
@@ -135,7 +150,10 @@ private:
     void setup_style();
     std::string normalize(std::string s);
     std::string closest_artwork(const std::string& rom_name);
-    std::vector<std::string> artwork_files();
+    // the listing is a directory walk over more than a thousand covers, and closest
+    // artwork needs it once per rom, so it is read once and kept
+    const std::vector<std::string>& artwork_files();
+    std::vector<std::string> artwork_cache;
 #if GB_MOBILE
     std::vector<std::string> bundled_roms();
     void copy_bundled_rom(const std::string& name);

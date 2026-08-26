@@ -14,7 +14,8 @@ set(GB_SOURCES
         frontend/app.h
         frontend/glass.h
         frontend/mobile_ui.cpp
-        platform/android_import.cpp)
+        platform/android_import.cpp
+        platform/desktop_theme.cpp)
 
 if(GB_ANDROID)
     # sdlactivity dlopens libSDL2.so then libmain.so, so the app has to be a shared lib
