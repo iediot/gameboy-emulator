@@ -45,6 +45,7 @@ private:
     SDL_AudioDeviceID audio_device;
     float volume = 0.7f;
     bool cgb_enabled = true;
+    bool dmg_colorize = true;
     SDL_Texture* cartridge_sprite;
     SDL_Texture* cartridge_shadow;
     SDL_Texture* rect_shadow;
@@ -126,6 +127,7 @@ private:
     void scan_roms();
     void load_rom(const std::string& name);
     void load_battery_ram(const std::string& name);
+    void refresh_palette();
     void save_battery_ram();
     void add_game();
     void render_game();

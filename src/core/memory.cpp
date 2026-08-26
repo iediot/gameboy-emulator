@@ -422,6 +422,155 @@ void Memory::write(uint16_t address, uint8_t value) {
         serial_buffer.push_back(static_cast<char>(value));
 }
 
+namespace {
+    // the cgb boot rom colours a monochrome cartridge from tables keyed on the sum of
+    // its title bytes, these are those tables, transcribed from the boot rom itself
+
+    const uint16_t kBootColors[128] = {
+        0x7FFF, 0x32BF, 0x00D0, 0x0000, 0x639F, 0x4279, 0x15B0, 0x04CB,
+        0x7FFF, 0x6E31, 0x454A, 0x0000, 0x7FFF, 0x1BEF, 0x0200, 0x0000,
+        0x7FFF, 0x421F, 0x1CF2, 0x0000, 0x7FFF, 0x5294, 0x294A, 0x0000,
+        0x7FFF, 0x03FF, 0x012F, 0x0000, 0x7FFF, 0x03EF, 0x01D6, 0x0000,
+        0x7FFF, 0x42B5, 0x3DC8, 0x0000, 0x7E74, 0x03FF, 0x0180, 0x0000,
+        0x67FF, 0x77AC, 0x1A13, 0x2D6B, 0x7ED6, 0x4BFF, 0x2175, 0x0000,
+        0x53FF, 0x4A5F, 0x7E52, 0x0000, 0x4FFF, 0x7ED2, 0x3A4C, 0x1CE0,
+        0x03ED, 0x7FFF, 0x255F, 0x0000, 0x036A, 0x021F, 0x03FF, 0x7FFF,
+        0x7FFF, 0x01DF, 0x0112, 0x0000, 0x231F, 0x035F, 0x00F2, 0x0009,
+        0x7FFF, 0x03EA, 0x011F, 0x0000, 0x299F, 0x001A, 0x000C, 0x0000,
+        0x7FFF, 0x027F, 0x001F, 0x0000, 0x7FFF, 0x03E0, 0x0206, 0x0120,
+        0x7FFF, 0x7EEB, 0x001F, 0x7C00, 0x7FFF, 0x3FFF, 0x7E00, 0x001F,
+        0x7FFF, 0x03FF, 0x001F, 0x0000, 0x03FF, 0x001F, 0x000C, 0x0000,
+        0x7FFF, 0x033F, 0x0193, 0x0000, 0x0000, 0x4200, 0x037F, 0x7FFF,
+        0x7FFF, 0x7E8C, 0x7C00, 0x0000, 0x7FFF, 0x1BEF, 0x6180, 0x0000,
+        0x7FFF, 0x7FEA, 0x7D5F, 0x0000, 0x4778, 0x3290, 0x1D87, 0x0861,
+    };
+
+    const uint8_t kTitleChecksums[94] = {
+        0x00, 0x88, 0x16, 0x36, 0xD1, 0xDB, 0xF2, 0x3C, 0x8C, 0x92, 0x3D, 0x5C, 0x58, 0xC9, 0x3E,
+        0x70, 0x1D, 0x59, 0x69, 0x19, 0x35, 0xA8, 0x14, 0xAA, 0x75, 0x95, 0x99, 0x34, 0x6F, 0x15,
+        0xFF, 0x97, 0x4B, 0x90, 0x17, 0x10, 0x39, 0xF7, 0xF6, 0xA2, 0x49, 0x4E, 0x43, 0x68, 0xE0,
+        0x8B, 0xF0, 0xCE, 0x0C, 0x29, 0xE8, 0xB7, 0x86, 0x9A, 0x52, 0x01, 0x9D, 0x71, 0x9C, 0xBD,
+        0x5D, 0x6D, 0x67, 0x3F, 0x6B, 0xB3, 0x46, 0x28, 0xA5, 0xC6, 0xD3, 0x27, 0x61, 0x18, 0x66,
+        0x6A, 0xBF, 0x0D, 0xF4, 0xB3, 0x46, 0x28, 0xA5, 0xC6, 0xD3, 0x27, 0x61, 0x18, 0x66, 0x6A,
+        0xBF, 0x0D, 0xF4, 0xB3,
+    };
+
+    const uint8_t kPalettePerChecksum[94] = {
+        0, 4, 5, 35, 34, 3, 31, 15, 10, 5, 19, 36, 7, 37, 30,
+        44, 21, 32, 31, 20, 5, 33, 13, 14, 5, 29, 5, 18, 9, 3,
+        2, 26, 25, 25, 41, 42, 26, 45, 42, 45, 36, 38, 26, 42, 30,
+        41, 34, 34, 5, 42, 6, 5, 33, 25, 42, 42, 40, 2, 16, 25,
+        42, 42, 5, 0, 39, 36, 22, 25, 6, 32, 12, 36, 11, 39, 18,
+        39, 24, 31, 50, 17, 46, 6, 27, 0, 47, 41, 41, 0, 0, 19,
+        34, 23, 18, 29,
+    };
+
+    // three colour offsets per entry, obj0 then obj1 then bg
+    const uint8_t kPaletteCombos[55][3] = {
+        { 16, 16,116},
+        { 72, 72, 72},
+        { 80, 80, 80},
+        { 96, 96, 96},
+        { 36, 36, 36},
+        {  0,  0,  0},
+        {108,108,108},
+        { 20, 20, 20},
+        { 48, 48, 48},
+        {104,104,104},
+        { 64, 32, 32},
+        { 16,112,112},
+        { 16,  8,  8},
+        { 12, 16, 16},
+        { 16,116,116},
+        {112, 16,112},
+        {  8, 68,  8},
+        { 64, 64, 32},
+        { 16, 16, 28},
+        { 16, 16, 72},
+        { 16, 16, 80},
+        { 76, 76, 36},
+        { 15, 15, 44},
+        { 68, 68,  8},
+        { 16, 16,  8},
+        { 16, 16, 12},
+        {112,112,  0},
+        { 12, 12,  0},
+        {  0,  0,  4},
+        { 72, 88, 72},
+        { 80, 88, 80},
+        { 96, 88, 96},
+        { 64, 88, 32},
+        { 68, 16, 52},
+        {111,  0, 56},
+        {111, 16, 60},
+        { 76, 91, 36},
+        { 64,112, 40},
+        { 16, 92,112},
+        { 68, 88,  8},
+        { 16,  0,  8},
+        { 16,112, 12},
+        {112, 12,  0},
+        { 12,112, 16},
+        { 84,112, 16},
+        { 12,112,  0},
+        {100, 12,112},
+        {  0,112, 32},
+        { 16, 12,112},
+        {112, 12, 24},
+        { 16,112,116},
+        {120,120,120},
+        {124,124,124},
+        {112, 16,  4},
+        {  0,  0,  8},
+    };
+
+    const char kDup4thLetter[] = "BEFAARBEKEK R-URAR INAILICE R";
+
+    // the first 65 checksums are unique, the rest collide and are told apart by the
+    // fourth character of the title
+    constexpr int kFirstDuplicate = 65;
+}
+
+// a monochrome cartridge gets colour on cgb hardware, picked from the title checksum
+void Memory::apply_compat_palette() {
+    compat_palette = false;
+    if (rom.size() < 0x0150)
+        return;
+
+    // only cartridges nintendo published are looked up, the rest take the default entry
+    bool nintendo = (rom[0x014B] == 0x01) ||
+                    (rom[0x014B] == 0x33 && rom[0x0144] == '0' && rom[0x0145] == '1');
+
+    int combo = 0;
+    if (nintendo) {
+        uint8_t sum = 0;
+        for (int i = 0x0134; i <= 0x0143; i++)
+            sum += rom[i];
+
+        int found = -1;
+        for (int i = 0; i < 94; i++) {
+            if (kTitleChecksums[i] != sum)
+                continue;
+            // past the unique run a checksum is shared, the title's fourth character
+            // is what tells those cartridges apart
+            if (i < kFirstDuplicate || kDup4thLetter[i - kFirstDuplicate] == (char)rom[0x0137]) {
+                found = i;
+                break;
+            }
+        }
+        if (found >= 0)
+            combo = kPalettePerChecksum[found] & 0x7F;
+    }
+
+    const uint8_t* off = kPaletteCombos[combo];
+    for (int i = 0; i < 4; i++) {
+        compat_obj[0][i] = kBootColors[off[0] + i];
+        compat_obj[1][i] = kBootColors[off[1] + i];
+        compat_bg[i]     = kBootColors[off[2] + i];
+    }
+    compat_palette = true;
+}
+
 // one 16 byte chunk, hblank transfers move a chunk per line while a general purpose
 // one drains every chunk in a single go
 void Memory::hdma_block() {
@@ -515,6 +664,9 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
         data[0xFF6A] = 0xC0;
         data[0xFF70] = 0xF9;
     }
+
+    if (!cgb_mode && cgb_enabled && dmg_colorize)
+        apply_compat_palette();
 
     data[0xFF00] = 0xCF; // P1
     data[0xFF02] = 0x7E; // SC

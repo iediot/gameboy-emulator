@@ -27,6 +27,12 @@ private:
 public:
     bool cgb_enabled = true;
     bool cgb_mode = false;
+    // a mono cartridge coloured the way the cgb boot rom would colour it
+    bool dmg_colorize = true;
+    bool compat_palette = false;
+    uint16_t compat_bg[4]{};
+    uint16_t compat_obj[2][4]{};
+    void apply_compat_palette();
 
     uint8_t vram[2][0x2000]{};
     uint8_t vram_bank = 0;

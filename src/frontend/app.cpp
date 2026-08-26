@@ -408,6 +408,8 @@ void App::load_settings() {
             float v; if (f >> v && v >= 0.0f && v <= 1.0f) volume = v;
         } else if (key == "cgb") {
             int v; if (f >> v) cgb_enabled = (v != 0);
+        } else if (key == "dmgcolor") {
+            int v; if (f >> v) dmg_colorize = (v != 0);
         } else if (key == "joystick") {
             int v;
             if (f >> v) {
@@ -463,6 +465,7 @@ void App::save_settings() {
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
     f << "volume " << volume << "\n";
     f << "cgb " << (cgb_enabled ? 1 : 0) << "\n";
+    f << "dmgcolor " << (dmg_colorize ? 1 : 0) << "\n";
 #if GB_MOBILE
     f << "joystick " << (joystick_mode ? 1 : 0) << "\n";
     f << "snap " << (snap_enabled ? 1 : 0) << "\n";
@@ -599,6 +602,7 @@ void App::load_rom(const std::string& name) {
     std::vector<uint8_t> rom_data{std::istreambuf_iterator<char>(rom_file),
         std::istreambuf_iterator<char>()};
     mem->cgb_enabled = cgb_enabled;
+    mem->dmg_colorize = dmg_colorize;
     mem->load_rom(rom_data);
     // the boot rom hands the game its hardware id in A, colour titles branch on it to
     // decide whether to bring up their cgb path at all
@@ -607,6 +611,21 @@ void App::load_rom(const std::string& name) {
 
     load_battery_ram(name);
     state = AppState::PLAYING;
+}
+
+// the colour table is chosen once at load, so a toggle has to redo that for the game
+// already running, a cgb cartridge has its own palettes and is left alone
+void App::refresh_palette() {
+    if (!mem)
+        return;
+    mem->cgb_enabled = cgb_enabled;
+    mem->dmg_colorize = dmg_colorize;
+    if (mem->cgb_mode)
+        return;
+    if (cgb_enabled && dmg_colorize)
+        mem->apply_compat_palette();
+    else
+        mem->compat_palette = false;
 }
 
 void App::load_battery_ram(const std::string& name) {
@@ -1077,6 +1096,12 @@ void App::draw_settings(float w, float h) {
         case TAB_SYSTEM: {
             if (toggle_row("game boy color", "##cgb", cgb_enabled)) {
                 cgb_enabled = !cgb_enabled;
+                refresh_palette();
+                save_settings();
+            }
+            if (toggle_row("colourise mono games", "##dmgcol", dmg_colorize)) {
+                dmg_colorize = !dmg_colorize;
+                refresh_palette();
                 save_settings();
             }
             break;

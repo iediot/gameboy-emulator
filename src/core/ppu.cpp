@@ -10,15 +10,26 @@ Ppu::Ppu(Memory& memory) : mem(memory) {}
 namespace {
     constexpr uint32_t kDmgShades[4] = {0xFF627102, 0xFF4D5802, 0xFF364002, 0xFF1F2701};
 
-    // colour ram holds little endian bgr555, two bytes per entry, eight per palette
-    uint32_t cgb_rgb(const uint8_t* pal, uint8_t palette_index, uint8_t color_id) {
-        int i = palette_index * 8 + color_id * 2;
-        uint16_t raw = (uint16_t)pal[i] | ((uint16_t)pal[i + 1] << 8);
+    uint32_t rgb555(uint16_t raw) {
         uint8_t r = raw & 0x1F, g = (raw >> 5) & 0x1F, b = (raw >> 10) & 0x1F;
         return 0xFF000000
              | ((uint32_t)((r << 3) | (r >> 2)) << 16)
              | ((uint32_t)((g << 3) | (g >> 2)) << 8)
              | (uint32_t)((b << 3) | (b >> 2));
+    }
+
+    // colour ram holds little endian bgr555, two bytes per entry, eight per palette
+    uint32_t cgb_rgb(const uint8_t* pal, uint8_t palette_index, uint8_t color_id) {
+        int i = palette_index * 8 + color_id * 2;
+        return rgb555((uint16_t)pal[i] | ((uint16_t)pal[i + 1] << 8));
+    }
+
+    // a mono game either runs through the boot rom's colour table or keeps the olive look
+    uint32_t bg_shade(const Memory& mem, uint8_t shade) {
+        return mem.compat_palette ? rgb555(mem.compat_bg[shade]) : kDmgShades[shade];
+    }
+    uint32_t obj_shade(const Memory& mem, int pal, uint8_t shade) {
+        return mem.compat_palette ? rgb555(mem.compat_obj[pal][shade]) : kDmgShades[shade];
     }
 }
 
@@ -239,7 +250,7 @@ void Ppu::draw_sprite() {
             if ((flags & 0x80) && bg_color_ids[LY][screen_x] != 0)
                 continue;
 
-            framebuffer[LY][screen_x] = kDmgShades[final_color];
+            framebuffer[LY][screen_x] = obj_shade(mem, (flags & 0x10) ? 1 : 0, final_color);
         }
     }
 }
@@ -257,7 +268,7 @@ void Ppu::draw_scanline() {
         for (int x = 0; x < 160; x++) {
             bg_color_ids[LY][x] = 0;
             bg_priority[LY][x]  = 0;
-            framebuffer[LY][x]  = kDmgShades[0];
+            framebuffer[LY][x]  = bg_shade(mem, 0);
         }
         draw_sprite();
         return;
@@ -278,7 +289,7 @@ void Ppu::draw_scanline() {
         bg_priority[LY][x] = (attr & 0x80) ? 1 : 0;
         framebuffer[LY][x] = mem.cgb_mode
             ? cgb_rgb(mem.bg_palette, attr & 0x07, color_id)
-            : kDmgShades[bgp_value >> (color_id * 2) & 0x03];
+            : bg_shade(mem, bgp_value >> (color_id * 2) & 0x03);
     }
 
     uint8_t WY = mem.read_direct(WY_ADDR);
@@ -307,7 +318,7 @@ void Ppu::draw_scanline() {
             bg_priority[LY][x] = (attr & 0x80) ? 1 : 0;
             framebuffer[LY][x] = mem.cgb_mode
                 ? cgb_rgb(mem.bg_palette, attr & 0x07, color_id)
-                : kDmgShades[bgp_value >> (color_id * 2) & 0x03];
+                : bg_shade(mem, bgp_value >> (color_id * 2) & 0x03);
         }
 
         window_line_counter++;
@@ -328,7 +339,7 @@ void Ppu::step(uint8_t cycles) {
         // the panel goes blank with the lcd, holding the last frame instead shows
         // whatever vram happened to contain while a game uploads with it switched off
         if (lcd_was_on) {
-            uint32_t blank = mem.cgb_mode ? 0xFFFFFFFF : kDmgShades[0];
+            uint32_t blank = (mem.cgb_mode || mem.compat_palette) ? 0xFFFFFFFF : kDmgShades[0];
             for (int y = 0; y < 144; y++)
                 for (int x = 0; x < 160; x++)
                     framebuffer[y][x] = blank;
