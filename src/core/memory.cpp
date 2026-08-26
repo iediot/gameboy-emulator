@@ -239,6 +239,32 @@ uint8_t Memory::read(uint16_t address) {
     if (lcd_on && mode >= 2  && address >= 0xFE00 && address <= 0xFE9F)
         return 0xFF;
 
+    if (address >= 0x8000 && address <= 0x9FFF)
+        return vram[vram_bank][address - 0x8000];
+    if (address >= 0xC000 && address <= 0xCFFF)
+        return wram[0][address - 0xC000];
+    if (address >= 0xD000 && address <= 0xDFFF)
+        return wram[wram_bank][address - 0xD000];
+
+    if (cgb_mode) {
+        switch (address) {
+            case 0xFF4D:
+                return (double_speed ? 0x80 : 0x00)
+                     | (speed_switch_armed ? 0x01 : 0x00) | 0x7E;
+            case 0xFF4F: return vram_bank | 0xFE;
+            // bit 7 clear reports a transfer still in flight, the low bits count the
+            // blocks that are left
+            case 0xFF55:
+                return hdma_running ? (uint8_t)((hdma_left - 1) & 0x7F) : 0xFF;
+            case 0xFF68: return data[0xFF68] | 0x40;
+            case 0xFF69: return bg_palette[data[0xFF68] & 0x3F];
+            case 0xFF6A: return data[0xFF6A] | 0x40;
+            case 0xFF6B: return obj_palette[data[0xFF6A] & 0x3F];
+            case 0xFF70: return (data[0xFF70] & 0x07) | 0xF8;
+            default: break;
+        }
+    }
+
     if (address >= 0xFF00 && address <= 0xFF7F)
         return data[address] | io_read_mask(address);
 
@@ -324,6 +350,68 @@ void Memory::write(uint16_t address, uint8_t value) {
     if (lcd_on && mode >= 2  && address >= 0xFE00 && address <= 0xFE9F)
         return;
 
+    if (cgb_mode) {
+        switch (address) {
+            case 0xFF4D: speed_switch_armed = value & 0x01; return;
+            case 0xFF4F: vram_bank = value & 0x01; return;
+            case 0xFF51: hdma_src = (hdma_src & 0x00FF) | (uint16_t)(value << 8); return;
+            case 0xFF52: hdma_src = (hdma_src & 0xFF00) | (value & 0xF0); return;
+            case 0xFF53: hdma_dst = (hdma_dst & 0x00FF) | (uint16_t)((value & 0x1F) << 8); return;
+            case 0xFF54: hdma_dst = (hdma_dst & 0xFF00) | (value & 0xF0); return;
+            case 0xFF55: {
+                uint8_t blocks = (value & 0x7F) + 1;
+                if (value & 0x80) {
+                    hdma_left = blocks;
+                    hdma_hblank = true;
+                    hdma_running = true;
+                } else if (hdma_running && hdma_hblank) {
+                    // clearing bit 7 mid transfer cancels the rest of it
+                    hdma_running = false;
+                    hdma_hblank = false;
+                } else {
+                    hdma_left = blocks;
+                    hdma_hblank = false;
+                    hdma_running = true;
+                    while (hdma_running)
+                        hdma_block();
+                }
+                return;
+            }
+            case 0xFF69: {
+                uint8_t index = data[0xFF68] & 0x3F;
+                bg_palette[index] = value;
+                if (data[0xFF68] & 0x80)
+                    data[0xFF68] = 0x80 | ((index + 1) & 0x3F);
+                return;
+            }
+            case 0xFF6B: {
+                uint8_t index = data[0xFF6A] & 0x3F;
+                obj_palette[index] = value;
+                if (data[0xFF6A] & 0x80)
+                    data[0xFF6A] = 0x80 | ((index + 1) & 0x3F);
+                return;
+            }
+            case 0xFF70:
+                wram_bank = (value & 0x07) ? (value & 0x07) : 1;
+                data[0xFF70] = value;
+                return;
+            default: break;
+        }
+    }
+
+    if (address >= 0x8000 && address <= 0x9FFF) {
+        vram[vram_bank][address - 0x8000] = value;
+        return;
+    }
+    if (address >= 0xC000 && address <= 0xCFFF) {
+        wram[0][address - 0xC000] = value;
+        return;
+    }
+    if (address >= 0xD000 && address <= 0xDFFF) {
+        wram[wram_bank][address - 0xD000] = value;
+        return;
+    }
+
     data[address] = value;
 
     if (address == 0xFF05)
@@ -332,6 +420,23 @@ void Memory::write(uint16_t address, uint8_t value) {
     // serial output, test roms print their results through it
     if (address == 0xFF01)
         serial_buffer.push_back(static_cast<char>(value));
+}
+
+// one 16 byte chunk, hblank transfers move a chunk per line while a general purpose
+// one drains every chunk in a single go
+void Memory::hdma_block() {
+    if (!hdma_running)
+        return;
+    for (int i = 0; i < 16; i++)
+        vram[vram_bank][(hdma_dst + i) & 0x1FFF] = read(hdma_src + i);
+    hdma_src += 16;
+    hdma_dst += 16;
+    if (hdma_left > 0)
+        hdma_left--;
+    if (hdma_left == 0) {
+        hdma_running = false;
+        hdma_hblank = false;
+    }
 }
 
 void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
@@ -384,6 +489,32 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
         mbc_type = MbcType::MBC5;
     else
         mbc_type = MbcType::NONE;
+
+    // bit 7 of the cgb flag marks a cartridge that knows about the colour hardware,
+    // anything else keeps running as a dmg
+    cgb_mode = cgb_enabled && (rom.size() > 0x0143) && (rom[0x0143] & 0x80);
+
+    vram_bank = 0;
+    wram_bank = 1;
+    double_speed = false;
+    speed_switch_armed = false;
+    hdma_running = false;
+    hdma_hblank = false;
+    hdma_left = 0;
+
+    if (cgb_mode) {
+        // both palette blocks power on white so a game that draws before uploading
+        // its own colours does not show black
+        for (int i = 0; i < 64; i++) {
+            bg_palette[i]  = 0xFF;
+            obj_palette[i] = 0xFF;
+        }
+        data[0xFF4D] = 0x7E;
+        data[0xFF4F] = 0xFE;
+        data[0xFF68] = 0xC0;
+        data[0xFF6A] = 0xC0;
+        data[0xFF70] = 0xF9;
+    }
 
     data[0xFF00] = 0xCF; // P1
     data[0xFF02] = 0x7E; // SC

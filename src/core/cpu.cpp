@@ -402,9 +402,13 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
             apu.frame_tick();
         last_apu_bit = apu_bit;
 
-        ppu.step(1);
-        apu.step(1);
-        mem.step_dma();
+        // in double speed the cpu and the divider run twice as fast, the ppu, the apu
+        // and dma keep their own clock, so they only advance on every second t-cycle
+        if (!mem.double_speed || (speed_phase ^= 1) == 0) {
+            ppu.step(1);
+            apu.step(1);
+            mem.step_dma();
+        }
 
         if (bus_kind != BUS_NONE && index == bus_at && bus_late)
             do_bus();
@@ -630,8 +634,13 @@ uint8_t Cpu::step() {
             break;
         }
 
-    case 0x10: { /* STOP (kinda useless as an instruction,
-                    therefore not yet implemented properly) */
+    case 0x10: { /* STOP, on the cgb this is how an armed speed switch is taken,
+                    everywhere else it stays the no-op it always was */
+            if (mem.cgb_mode && mem.speed_switch_armed) {
+                mem.double_speed = !mem.double_speed;
+                mem.speed_switch_armed = false;
+                speed_phase = 0;
+            }
             PC++;
             break;
         }

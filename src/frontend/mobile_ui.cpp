@@ -297,17 +297,7 @@ namespace {
 
 // draws the running game, the lcd sits up top with the joypad drawn beneath it
 void App::render_game_mobile() {
-    // convert the framebuffer to argb, same olive palette as the desktop path
-    uint32_t pixels[144 * 160];
-    for (int y = 0; y < 144; y++)
-        for (int x = 0; x < 160; x++)
-            switch (ppu->framebuffer[y][x]) {
-                case 0: pixels[y * 160 + x] = 0xFF627102; break; // darkest shade
-                case 1: pixels[y * 160 + x] = 0xFF4D5802; break; // slightly lighter shade
-                case 2: pixels[y * 160 + x] = 0xFF364002; break; // lighter shade
-                case 3: pixels[y * 160 + x] = 0xFF1F2701; break; // light shade
-            }
-    SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
+    SDL_UpdateTexture(texture, nullptr, ppu->framebuffer, 160 * 4);
 
     // imgui's renderer backend leaves a hidpi scale/viewport/clip on the renderer, fully clear it
     // before raw drawing, scale is set last so nothing undoes it

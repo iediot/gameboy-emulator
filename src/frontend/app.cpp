@@ -18,6 +18,14 @@
 #include "imgui_impl_sdlrenderer2.h"
 #include "glass.h"
 
+// colour cartridges carry .gbc, monochrome ones .gb, both are just a rom to us
+static bool is_rom_file(const std::filesystem::path& p) {
+    std::string e = p.extension().string();
+    for (char& c : e)
+        c = (char)std::tolower((unsigned char)c);
+    return e == ".gb" || e == ".gbc";
+}
+
 #if GB_DESKTOP
 static int SDLCALL resize_watch(void* data, SDL_Event* e) {
     if (e->type == SDL_WINDOWEVENT &&
@@ -272,7 +280,7 @@ void App::init_paths() {
         std::filesystem::create_directories(rom_folder, ec);
         if (std::filesystem::is_empty(rom_folder, ec)) {
             for (const auto& e : std::filesystem::directory_iterator(res + "game-roms/", ec))
-                if (e.path().extension() == ".gb")
+                if (is_rom_file(e.path()))
                     std::filesystem::copy_file(e.path(), rom_folder + e.path().filename().string(),
                                                std::filesystem::copy_options::skip_existing, ec);
         }
@@ -398,6 +406,8 @@ void App::load_settings() {
             int v; if (f >> v) render_cartridge = (v != 0);
         } else if (key == "volume") {
             float v; if (f >> v && v >= 0.0f && v <= 1.0f) volume = v;
+        } else if (key == "cgb") {
+            int v; if (f >> v) cgb_enabled = (v != 0);
         } else if (key == "joystick") {
             int v;
             if (f >> v) {
@@ -452,6 +462,7 @@ void App::save_settings() {
     f << "hidpi " << (hidpi ? 1 : 0) << "\n";
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
     f << "volume " << volume << "\n";
+    f << "cgb " << (cgb_enabled ? 1 : 0) << "\n";
 #if GB_MOBILE
     f << "joystick " << (joystick_mode ? 1 : 0) << "\n";
     f << "snap " << (snap_enabled ? 1 : 0) << "\n";
@@ -554,7 +565,7 @@ void App::scan_roms() {
     rom_list.clear();
     cover_list.clear();
     for (const auto& entry : std::filesystem::directory_iterator(rom_folder)) {
-        if (entry.path().extension() == ".gb") {
+        if (is_rom_file(entry.path())) {
             rom_list.push_back(entry.path().filename().string());
             std::string path = closest_artwork(entry.path().stem().string());
             if (path.empty())
@@ -587,7 +598,12 @@ void App::load_rom(const std::string& name) {
     }
     std::vector<uint8_t> rom_data{std::istreambuf_iterator<char>(rom_file),
         std::istreambuf_iterator<char>()};
+    mem->cgb_enabled = cgb_enabled;
     mem->load_rom(rom_data);
+    // the boot rom hands the game its hardware id in A, colour titles branch on it to
+    // decide whether to bring up their cgb path at all
+    if (mem->cgb_mode)
+        cpu->A = 0x11;
 
     load_battery_ram(name);
     state = AppState::PLAYING;
@@ -626,22 +642,7 @@ void App::render_game() {
     render_game_mobile(); // letterboxed layout lives in ios_ui.cpp
     return;
 #endif
-    uint32_t pixels[144 * 160];
-    for (int y = 0; y < 144; y++)
-        for (int x = 0; x < 160; x++)
-            // the palette is some kind of olive for a more nostalgic feeling
-                switch (ppu->framebuffer[y][x]) {
-        case 0:
-                    pixels[y * 160 + x] = 0xFF627102; break; // darkest shade
-        case 1:
-                    pixels[y * 160 + x] = 0xFF4D5802; break; // slightly lighter shade
-        case 2:
-                    pixels[y * 160 + x] = 0xFF364002; break; // lighter shade
-        case 3:
-                    pixels[y * 160 + x] = 0xFF1F2701; break; // light shade
-                }
-
-    SDL_UpdateTexture(texture, nullptr, pixels, 160 * 4);
+    SDL_UpdateTexture(texture, nullptr, ppu->framebuffer, 160 * 4);
 
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     SDL_RenderSetViewport(renderer, nullptr);
@@ -692,7 +693,7 @@ void App::render_game() {
 void App::add_game() {
 #if GB_DESKTOP
     nfdchar_t* path = nullptr;
-    nfdfilteritem_t filter[1] = {{"Game Boy ROM", "gb"}};
+    nfdfilteritem_t filter[1] = {{"Game Boy ROM", "gb,gbc"}};
     if (NFD_OpenDialog(&path, filter, 1, nullptr) == NFD_OKAY) {
         std::filesystem::copy_file(path,
             rom_folder + std::filesystem::path(path).filename().string(),
@@ -747,14 +748,14 @@ bool App::back_button(float cx, float cy, float r) {
 }
 
 namespace {
-    enum SettingsTab { TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_CONTROLS, TAB_KEYBINDS };
+    enum SettingsTab { TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_SYSTEM, TAB_CONTROLS, TAB_KEYBINDS };
 #if GB_MOBILE
     // no display tab on mobile, screen fit, vsync and hidpi are all desktop only
-    constexpr SettingsTab kSettingsTabs[] = {TAB_MENU, TAB_AUDIO, TAB_CONTROLS};
-    const char* const kSettingsNames[] = {"menu", "audio", "controls"};
+    constexpr SettingsTab kSettingsTabs[] = {TAB_MENU, TAB_AUDIO, TAB_SYSTEM, TAB_CONTROLS};
+    const char* const kSettingsNames[] = {"menu", "audio", "system", "controls"};
 #else
-    constexpr SettingsTab kSettingsTabs[] = {TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_KEYBINDS};
-    const char* const kSettingsNames[] = {"display", "menu", "audio", "keybinds"};
+    constexpr SettingsTab kSettingsTabs[] = {TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_SYSTEM, TAB_KEYBINDS};
+    const char* const kSettingsNames[] = {"display", "menu", "audio", "system", "keybinds"};
 #endif
     constexpr int kSettingsTabCount = (int)(sizeof(kSettingsTabs) / sizeof(kSettingsTabs[0]));
 }
@@ -1073,6 +1074,14 @@ void App::draw_settings(float w, float h) {
             break;
         }
 
+        case TAB_SYSTEM: {
+            if (toggle_row("game boy color", "##cgb", cgb_enabled)) {
+                cgb_enabled = !cgb_enabled;
+                save_settings();
+            }
+            break;
+        }
+
         default: {
             const char* names[8] = {"right", "left", "up", "down", "a", "b", "select", "start"};
             const int order[8] = {2, 3, 1, 0, 4, 5, 6, 7};
@@ -1356,7 +1365,7 @@ std::vector<std::string> App::bundled_roms() {
     std::string b = base ? base : "";
     if (base) SDL_free(base);
     for (const auto& e : std::filesystem::directory_iterator(b + "game-roms/", ec))
-        if (e.path().extension() == ".gb")
+        if (is_rom_file(e.path()))
             out.push_back(e.path().filename().string());
     return out;
 #endif
@@ -1430,8 +1439,10 @@ std::string App::display_name(const std::string& s) {
         out += ch;
     }
 
-    // drop a trailing gb extension if present
-    if (out.size() >= 3 && out.substr(out.size() - 3) == ".gb")
+    // drop a trailing rom extension if present
+    if (out.size() >= 4 && out.substr(out.size() - 4) == ".gbc")
+        out.erase(out.size() - 4);
+    else if (out.size() >= 3 && out.substr(out.size() - 3) == ".gb")
         out.erase(out.size() - 3);
 
     // trim trailing spaces left behind by removed tags

@@ -12,7 +12,8 @@ class Ppu {
 private:
     Memory& mem;
     // helper for our draw method
-    uint8_t fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc);
+    uint8_t fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc,
+                           uint8_t& attr_out);
     uint16_t mode3_length_extra();
 public:
     // very used memory addresses
@@ -34,12 +35,16 @@ public:
 
     // array to keep track of drawn pixels
     uint8_t bg_color_ids[144][160];
+    // cgb tile attribute bit 7, the background wins over a sprite on this pixel
+    uint8_t bg_priority[144][160];
 
     // variables used throughout ppu
     uint16_t scanline_cycles = 0;
     uint8_t ly_counter = 0;
     bool lcd_was_on = true;
-    uint8_t framebuffer[144][160] = {};
+    // finished argb pixels, the dmg shades are baked in here so both the colour and the
+    // monochrome path hand the frontend the same thing
+    uint32_t framebuffer[144][160] = {};
     uint8_t prev_mode = 0;
     uint8_t window_line_counter = 0;
 

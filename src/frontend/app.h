@@ -44,6 +44,7 @@ private:
     SDL_Texture* texture = nullptr;
     SDL_AudioDeviceID audio_device;
     float volume = 0.7f;
+    bool cgb_enabled = true;
     SDL_Texture* cartridge_sprite;
     SDL_Texture* cartridge_shadow;
     SDL_Texture* rect_shadow;

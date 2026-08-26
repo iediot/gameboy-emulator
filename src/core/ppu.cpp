@@ -7,13 +7,32 @@
 
 Ppu::Ppu(Memory& memory) : mem(memory) {}
 
-uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc) {
+namespace {
+    constexpr uint32_t kDmgShades[4] = {0xFF627102, 0xFF4D5802, 0xFF364002, 0xFF1F2701};
+
+    // colour ram holds little endian bgr555, two bytes per entry, eight per palette
+    uint32_t cgb_rgb(const uint8_t* pal, uint8_t palette_index, uint8_t color_id) {
+        int i = palette_index * 8 + color_id * 2;
+        uint16_t raw = (uint16_t)pal[i] | ((uint16_t)pal[i + 1] << 8);
+        uint8_t r = raw & 0x1F, g = (raw >> 5) & 0x1F, b = (raw >> 10) & 0x1F;
+        return 0xFF000000
+             | ((uint32_t)((r << 3) | (r >> 2)) << 16)
+             | ((uint32_t)((g << 3) | (g >> 2)) << 8)
+             | (uint32_t)((b << 3) | (b >> 2));
+    }
+}
+
+uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc,
+                            uint8_t& attr_out) {
     // find the tile in the 32x32 map which it covers
     uint8_t tile_col = x / 8;
     uint8_t tile_row = y / 8;
 
+    // the map itself always lives in bank 0, bank 1 holds the attribute for the same slot
     uint16_t map_address = map_base + tile_row * 32 + tile_col;
-    uint8_t tile_index = mem.read_direct(map_address);
+    uint8_t tile_index = mem.vram_read(0, map_address);
+    uint8_t attr = mem.cgb_mode ? mem.vram_read(1, map_address) : 0;
+    attr_out = attr;
 
     // find the tile's pixel data in VRAM
     uint16_t tile_address;
@@ -26,12 +45,18 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcd
 
     // row of pixel data
     uint8_t pixel_row = y % 8;
+    if (attr & 0x40)
+        pixel_row = 7 - pixel_row;
+
     uint16_t row_address = tile_address + pixel_row * 2;
-    uint8_t byte_low = mem.read_direct(row_address);
-    uint8_t byte_high = mem.read_direct(row_address + 1);
+    uint8_t bank = (attr & 0x08) ? 1 : 0;
+    uint8_t byte_low = mem.vram_read(bank, row_address);
+    uint8_t byte_high = mem.vram_read(bank, row_address + 1);
 
     // 2-bit color id
     uint8_t pixel_col = x % 8;
+    if (attr & 0x20)
+        pixel_col = 7 - pixel_col;
     uint8_t low_bit = byte_low >> (7 - pixel_col) & 1;
     uint8_t high_bit = byte_high >> (7 - pixel_col) & 1;
     uint8_t color_id = (high_bit << 1) | low_bit;
@@ -127,12 +152,20 @@ void Ppu::draw_sprite() {
         scanline_sprites[sprite_count++] = {x, tile_index, flags, (uint8_t)row, (uint8_t)i};
     }
 
-    // sort by x descending, and for ties earlier oam index wins
-    std::stable_sort(scanline_sprites, scanline_sprites + sprite_count,
-                     [](const sprite_vars& a, const sprite_vars& b) {
-        if (a.x != b.x) return a.x > b.x;
-        return a.oam_index > b.oam_index;
-    });
+    // the later a sprite is drawn the more it wins, on the dmg that order is by x with
+    // oam index breaking ties, the cgb drops x from the comparison entirely
+    if (mem.cgb_mode) {
+        std::stable_sort(scanline_sprites, scanline_sprites + sprite_count,
+                         [](const sprite_vars& a, const sprite_vars& b) {
+            return a.oam_index > b.oam_index;
+        });
+    } else {
+        std::stable_sort(scanline_sprites, scanline_sprites + sprite_count,
+                         [](const sprite_vars& a, const sprite_vars& b) {
+            if (a.x != b.x) return a.x > b.x;
+            return a.oam_index > b.oam_index;
+        });
+    }
 
     for (int s = 0; s < sprite_count; s++) {
         const sprite_vars& sprite = scanline_sprites[s];
@@ -149,8 +182,9 @@ void Ppu::draw_sprite() {
             row = (sprite_height - 1) - row;
 
         uint16_t row_address = 0x8000 + tile_index * 16 + row * 2;
-        uint8_t low_byte = mem.read_direct(row_address);
-        uint8_t high_byte = mem.read_direct(row_address + 1);
+        uint8_t tile_bank = (mem.cgb_mode && (flags & 0x08)) ? 1 : 0;
+        uint8_t low_byte = mem.vram_read(tile_bank, row_address);
+        uint8_t high_byte = mem.vram_read(tile_bank, row_address + 1);
 
         for (int c = 0; c < 8; c++)
         {
@@ -176,6 +210,21 @@ void Ppu::draw_sprite() {
             if (color_id == 0)
                 continue;
 
+            // with lcdc bit 0 clear the cgb strips the background of any priority and
+            // every sprite lands on top, otherwise either the tile attribute or the
+            // sprite's own flag can put the background back in front
+            if (mem.cgb_mode) {
+                bool master_priority = LCDC & 0x01;
+                bool bg_wins = master_priority
+                            && bg_color_ids[LY][screen_x] != 0
+                            && (bg_priority[LY][screen_x] || (flags & 0x80));
+                if (bg_wins)
+                    continue;
+                framebuffer[LY][screen_x] =
+                    cgb_rgb(mem.obj_palette, flags & 0x07, color_id);
+                continue;
+            }
+
             /* calculate the final color using the
             respective palette, OBP0 OR OBP1 */
             uint8_t palette;
@@ -190,7 +239,7 @@ void Ppu::draw_sprite() {
             if ((flags & 0x80) && bg_color_ids[LY][screen_x] != 0)
                 continue;
 
-            framebuffer[LY][screen_x] = final_color;
+            framebuffer[LY][screen_x] = kDmgShades[final_color];
         }
     }
 }
@@ -202,11 +251,13 @@ void Ppu::draw_scanline() {
     uint8_t LY = mem.read_direct(LY_ADDR);
     uint8_t LCDC = mem.read_direct(LCDC_ADDR);
 
-    // bg off - white and bg counts as colour 0
-    if (!(LCDC & 0x01)) {
+    // on the dmg bit 0 blanks the background, on the cgb it only drops its priority so
+    // the tiles still have to be drawn
+    if (!mem.cgb_mode && !(LCDC & 0x01)) {
         for (int x = 0; x < 160; x++) {
             bg_color_ids[LY][x] = 0;
-            framebuffer[LY][x]  = 0;
+            bg_priority[LY][x]  = 0;
+            framebuffer[LY][x]  = kDmgShades[0];
         }
         draw_sprite();
         return;
@@ -219,12 +270,15 @@ void Ppu::draw_scanline() {
         uint8_t bg_y = SCY + LY;
         uint8_t bg_x = SCX + x;
 
-        uint8_t color_id = fetch_color_id(bg_x, bg_y, map_base, LCDC);
-        uint8_t final_color = bgp_value >> (color_id * 2) & 0x03;
+        uint8_t attr;
+        uint8_t color_id = fetch_color_id(bg_x, bg_y, map_base, LCDC, attr);
 
         // put the color id into this array to keep track of drawn tiles
         bg_color_ids[LY][x] = color_id;
-        framebuffer[LY][x] = final_color;
+        bg_priority[LY][x] = (attr & 0x80) ? 1 : 0;
+        framebuffer[LY][x] = mem.cgb_mode
+            ? cgb_rgb(mem.bg_palette, attr & 0x07, color_id)
+            : kDmgShades[bgp_value >> (color_id * 2) & 0x03];
     }
 
     uint8_t WY = mem.read_direct(WY_ADDR);
@@ -245,12 +299,15 @@ void Ppu::draw_scanline() {
                 continue;
             uint8_t win_x = x - (WX - 7);
 
-            uint8_t color_id = fetch_color_id(win_x, win_y, window_tile_map, LCDC);
-            uint8_t final_color = bgp_value >> (color_id * 2) & 0x03;
+            uint8_t attr;
+            uint8_t color_id = fetch_color_id(win_x, win_y, window_tile_map, LCDC, attr);
 
             // put the color id into this array to keep track of drawn tiles
             bg_color_ids[LY][x] = color_id;
-            framebuffer[LY][x] = final_color;
+            bg_priority[LY][x] = (attr & 0x80) ? 1 : 0;
+            framebuffer[LY][x] = mem.cgb_mode
+                ? cgb_rgb(mem.bg_palette, attr & 0x07, color_id)
+                : kDmgShades[bgp_value >> (color_id * 2) & 0x03];
         }
 
         window_line_counter++;
@@ -270,10 +327,12 @@ void Ppu::step(uint8_t cycles) {
         prev_mode = 0;
         // the panel goes blank with the lcd, holding the last frame instead shows
         // whatever vram happened to contain while a game uploads with it switched off
-        if (lcd_was_on)
+        if (lcd_was_on) {
+            uint32_t blank = mem.cgb_mode ? 0xFFFFFFFF : kDmgShades[0];
             for (int y = 0; y < 144; y++)
                 for (int x = 0; x < 160; x++)
-                    framebuffer[y][x] = 0;
+                    framebuffer[y][x] = blank;
+        }
         lcd_was_on = false;
         return;
     }
@@ -343,8 +402,13 @@ void Ppu::step(uint8_t cycles) {
 
     mem.write_direct(STAT_ADDR, (mem.read_direct(STAT_ADDR) & 0xFC) | mode);
 
-    if (mode == 0 && prev_mode != 0 && ly_counter < 144)
+    if (mode == 0 && prev_mode != 0 && ly_counter < 144) {
         draw_scanline();
+        // an hblank transfer moves one 16 byte chunk per line, which is how games get
+        // tile data in without a visible tear
+        if (mem.hdma_running && mem.hdma_hblank)
+            mem.hdma_block();
+    }
 
     prev_mode = mode;
 }

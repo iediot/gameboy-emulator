@@ -59,6 +59,7 @@ public:
     uint16_t bus_addr = 0;
     uint8_t bus_val = 0;
     uint8_t bus_result = 0;
+    uint8_t speed_phase = 0;  // alternates so peripherals get half the cpu's t-cycles
     uint8_t bus_at = 4;      // which t-cycle of the group it lands on, 1 based
     bool bus_late = true;    // after that cycle's peripheral work rather than before
     bool tima_reloaded = false;   // the reload fired on this t-cycle, a write now is dropped
