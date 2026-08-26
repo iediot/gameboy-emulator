@@ -70,8 +70,12 @@ def stageGbAssets = tasks.register('stageGbAssets', Copy) {
     from(new File(repoRoot, 'assets/sprites')) {
         include 'cartridge.png'
     }
-    from(new File(repoRoot, 'assets/artworks')) {
-        into 'artworks'
+    from(new File(repoRoot, 'assets/artworks/gb')) {
+        into 'artworks/gb'
+        include '*.png'
+    }
+    from(new File(repoRoot, 'assets/artworks/gbc')) {
+        into 'artworks/gbc'
         include '*.png'
     }
     from(new File(repoRoot, 'roms/game-roms')) {
@@ -91,7 +95,8 @@ def writeGbManifests = tasks.register('writeGbManifests') {
             files.findAll { f -> exts.any { f.name.toLowerCase().endsWith(it) } }
                  .collect { it.name }.sort().join('\n') + '\n'
         }
-        new File(stagedAssets, 'artworks.txt').text  = listing(new File(stagedAssets, 'artworks'), ['.png'])
+        new File(stagedAssets, 'artworks-gb.txt').text  = listing(new File(stagedAssets, 'artworks/gb'), ['.png'])
+        new File(stagedAssets, 'artworks-gbc.txt').text = listing(new File(stagedAssets, 'artworks/gbc'), ['.png'])
         new File(stagedAssets, 'game-roms.txt').text = listing(new File(stagedAssets, 'game-roms'), ['.gb', '.gbc'])
     }
 }

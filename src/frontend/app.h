@@ -78,9 +78,9 @@ private:
     // the library is split by cartridge type, 0 is game boy and 1 is game boy color
     int library_tab = 0;
     float tab_slide = 0.0f;      // eased position of the pill indicator
-    // per rom: 0 dmg only, 1 dual, 2 colour only. a dual cartridge runs on both systems
-    // so it earns a place on both shelves
-    std::vector<uint8_t> cart_mode;
+    // which shelf each rom is filed on, straight off its extension. that is how the
+    // cartridge was sold, which is a different question from whether it runs in colour
+    std::vector<uint8_t> rom_is_gbc;
     bool in_tab(int rom, int tab) const;
     // 0 follows the os, 1 forces light, 2 forces dark
     int theme_mode = 0;
@@ -149,11 +149,13 @@ private:
     void handle_events();
     void setup_style();
     std::string normalize(std::string s);
-    std::string closest_artwork(const std::string& rom_name);
+    std::string closest_artwork(const std::string& rom_name, bool gbc);
     // the listing is a directory walk over more than a thousand covers, and closest
     // artwork needs it once per rom, so it is read once and kept
-    const std::vector<std::string>& artwork_files();
-    std::vector<std::string> artwork_cache;
+    const std::vector<std::string>& artwork_files(bool gbc);
+    std::vector<std::string> artwork_cache_gb;
+    std::vector<std::string> artwork_cache_gbc;
+    std::string match_artwork(const std::string& target, bool gbc);
 #if GB_MOBILE
     std::vector<std::string> bundled_roms();
     void copy_bundled_rom(const std::string& name);

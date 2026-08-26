@@ -569,11 +569,10 @@ void App::run() {
     }
 }
 
-// a mono cart belongs to the left shelf, a colour only cart to the right, and a dual
-// mode cart sits on both because it genuinely runs on either system
+// .gb files on the left shelf, .gbc on the right, one home each
 bool App::in_tab(int rom, int tab) const {
-    uint8_t mode = (rom < (int)cart_mode.size()) ? cart_mode[rom] : 0;
-    return tab == 0 ? (mode == 0 || mode == 1) : (mode == 1 || mode == 2);
+    uint8_t gbc = (rom < (int)rom_is_gbc.size()) ? rom_is_gbc[rom] : 0;
+    return (gbc ? 1 : 0) == tab;
 }
 
 // the rom indices belonging to whichever half of the library is on screen
@@ -649,20 +648,22 @@ void App::draw_library_tabs(float cx, float cy, float pill_w, float pill_h) {
 void App::scan_roms() {
     rom_list.clear();
     cover_list.clear();
-    cart_mode.clear();
+    rom_is_gbc.clear();
     for (const auto& entry : std::filesystem::directory_iterator(rom_folder)) {
         if (is_rom_file(entry.path())) {
             rom_list.push_back(entry.path().filename().string());
-            /* bit 7 of the cgb flag is what the hardware itself looks at, the file
-               extension is only a hint and plenty of colour carts still end in .gb.
-               0xC0 refuses to boot on a dmg, 0x80 runs on either, and anything else is
-               a plain mono cartridge, on those this byte is still a title character */
-            uint8_t flag = 0;
-            std::ifstream hdr(entry.path(), std::ios::binary);
-            if (hdr.seekg(0x0143) && hdr.good())
-                flag = (uint8_t)hdr.get();
-            cart_mode.push_back(flag == 0xC0 ? 2 : ((flag & 0x80) ? 1 : 0));
-            std::string path = closest_artwork(entry.path().stem().string());
+            /* the shelf comes from the extension, which is how the cartridge was sold.
+               the header only says whether it can do colour, and it cannot tell a game
+               boy game with colour added from a colour game that also runs on a dmg,
+               both carry 0x80. whether it actually renders in colour is decided from
+               the header later, in Memory::load_rom */
+            std::string ext = entry.path().extension().string();
+            for (char& c : ext)
+                c = (char)std::tolower((unsigned char)c);
+            rom_is_gbc.push_back(ext == ".gbc" ? 1 : 0);
+
+            bool gbc = ext == ".gbc";
+            std::string path = closest_artwork(entry.path().stem().string(), gbc);
             if (path.empty())
                 cover_list.push_back(nullptr);
             else {
@@ -1083,8 +1084,9 @@ void App::draw_settings(float w, float h) {
                 bool hot_t = ImGui::IsItemHovered();
                 float ty = tp.y + (fh - th) * 0.5f;
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
+                // the off state needs the groove colour too, panel is the sheet behind it
                 ImU32 track = on ? (hot_t ? theme::at().accent : theme::at().button)
-                                 : (hot_t ? theme::at().surface  : theme::at().panel);
+                                 : (hot_t ? theme::at().surface : theme::at().track);
                 tdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
                 float kr = th * 0.5f - 3.0f;
                 float kx = on ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
@@ -1111,8 +1113,10 @@ void App::draw_settings(float w, float h) {
 
                 float ty = sp.y + (fh - th) * 0.5f;
                 ImDrawList* sdl = ImGui::GetWindowDrawList();
+                // its own colour, not the sheet's, or the unfilled part of the bar
+                // disappears into the panel behind it
                 sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw, ty + th),
-                                   theme::at().panel, th * 0.5f);
+                                   theme::at().track, th * 0.5f);
                 if (v > 0.0f)
                     sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw * v, ty + th),
                                        hot_s ? theme::at().accent
@@ -1592,31 +1596,34 @@ void App::copy_bundled_rom(const std::string& name) {
 }
 #endif
 
-const std::vector<std::string>& App::artwork_files() {
-    if (!artwork_cache.empty())
-        return artwork_cache;
+// the two cover sets live apart, because a title released on both systems has a cover in
+// each and they normalise to the same name
+const std::vector<std::string>& App::artwork_files(bool gbc) {
+    std::vector<std::string>& cache = gbc ? artwork_cache_gbc : artwork_cache_gb;
+    if (!cache.empty())
+        return cache;
 #if GB_ANDROID
-    artwork_cache = asset_manifest("artworks.txt");
+    cache = asset_manifest(gbc ? "artworks-gbc.txt" : "artworks-gb.txt");
 #else
     std::error_code ec;
-    for (const auto& e : std::filesystem::directory_iterator(artwork_folder, ec))
+    for (const auto& e : std::filesystem::directory_iterator(artwork_folder + (gbc ? "gbc/" : "gb/"), ec))
         if (e.path().extension() == ".png")
-            artwork_cache.push_back(e.path().filename().string());
+            cache.push_back(e.path().filename().string());
 #endif
-    return artwork_cache;
+    return cache;
 }
 
-std::string App::closest_artwork(const std::string& rom_name) {
-    std::string target = normalize(rom_name);
+// searches one set, returns the file name only, empty when nothing is close enough
+std::string App::match_artwork(const std::string& target, bool gbc) {
     std::string best_name;
     size_t best_score = std::string::npos;
 
-    for (const std::string& file : artwork_files()) {
+    for (const std::string& file : artwork_files(gbc)) {
         std::string cand = normalize(file.substr(0, file.size() - 4));
         if (cand.empty()) continue;
 
         if (cand == target)
-            return artwork_folder + file;           // exact, done
+            return file;                            // exact, done
 
         // accept only if one contains the other; score by length difference
         if (cand.find(target) != std::string::npos ||
@@ -1630,7 +1637,25 @@ std::string App::closest_artwork(const std::string& rom_name) {
             }
         }
     }
-    return best_name.empty() ? std::string() : artwork_folder + best_name;
+    return best_name;
+}
+
+/* a rom looks in its own system's covers first. space invaders came out on both, and the
+   two covers normalise to the same name, so one folder could only ever return whichever
+   the directory happened to list first. the other set is still a fallback, for a game
+   that only ever had a cover on one side */
+std::string App::closest_artwork(const std::string& rom_name, bool gbc) {
+    std::string target = normalize(rom_name);
+
+    std::string hit = match_artwork(target, gbc);
+    if (!hit.empty())
+        return artwork_folder + (gbc ? "gbc/" : "gb/") + hit;
+
+    hit = match_artwork(target, !gbc);
+    if (!hit.empty())
+        return artwork_folder + (gbc ? "gb/" : "gbc/") + hit;
+
+    return {};
 }
 
 // turns the file name into a formatted displayable name for the menu ui

@@ -1,10 +1,14 @@
 <div align="center">
 
-<img src="assets/sprites/icon-mac-light.png" width="256" alt="gameboy-emu icon">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sprites/icon-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/sprites/icon-light.png">
+  <img src="assets/sprites/icon-light.png" width="220" alt="gameboy-emu icon">
+</picture>
 
 # gameboy-emu
 
-**A Game Boy emulator written from scratch in C++**
+**A Game Boy and Game Boy Color emulator written from scratch in C++**
 
 ![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-sqircle&logo=cplusplus&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-sqircle&logo=linux&logoColor=black)
@@ -20,24 +24,40 @@ https://github.com/user-attachments/assets/81d463ea-14fc-42f1-a90f-8be842564cd4
 
 ## Overview
 
-No frameworks, no borrowed cores — the CPU, PPU, timer, interrupt controller and cartridge
-mappers are all implemented here from the hardware documentation. On top of that sits a
-hand-drawn Dear ImGui frontend: a cover-art carousel that mounts each game's box art into a
-Game Boy cartridge shell, live settings, rebindable keys, and the whole thing compiles
-unchanged for iOS and Android.
+No frameworks, no borrowed cores — the CPU, PPU, APU, timer, interrupt controller and
+cartridge mappers are all implemented here from the hardware documentation. On top of that
+sits a hand-drawn Dear ImGui frontend: a cover-art carousel that mounts each game's box art
+into a Game Boy cartridge shell, light and dark themes taken off the app icon, live
+settings, rebindable keys, and the whole thing compiles unchanged for iOS and Android.
 
 ## Emulation
 
 | Component | Status |
 |---|---|
 | **CPU** | Full Sharp LR35902 set — 256 base + 256 CB-prefixed opcodes, M-cycle accurate, with the EI 1-instruction delay and the HALT bug |
-| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, and the DMG OAM corruption bug |
+| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, variable mode 3 length, and the DMG OAM corruption bug |
 | **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning |
-| **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection |
+| **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection, including the reload-cycle write quirks |
 | **Interrupts** | VBlank, STAT, Timer and Joypad with correct dispatch timing and IME semantics |
 | **DMA** | OAM transfer via `$FF46`, cycle-stepped against the CPU |
-| **Cartridges** | MBC1, MBC3 and MBC5 bank switching, with battery-backed RAM saved to `.sav` |
+| **Cartridges** | MBC1, MBC2, MBC3 and MBC5 bank switching, with battery-backed RAM saved to `.sav` |
 | **Boot** | Post-boot register and I/O state, so games start without a boot ROM |
+
+### Game Boy Color
+
+| Feature | Status |
+|---|---|
+| **Colour palettes** | 8 background and 8 object palettes, BCPS/BCPD and OCPS/OCPD with auto-increment |
+| **Banked VRAM** | Two banks via VBK, with tile attributes — palette, bank, flips and priority |
+| **Banked WRAM** | Eight banks via SVBK |
+| **Sprite rules** | OAM-index priority, per-sprite VRAM bank, and LCDC bit 0 as master priority |
+| **HDMA / GDMA** | General-purpose and H-blank transfers via `$FF51`–`$FF55` |
+| **Double speed** | KEY1 arm plus `STOP`, with the peripherals held to their own clock |
+| **Mono colourisation** | The CGB boot ROM's compatibility palettes, picked by title checksum, so monochrome games get the colours real hardware gives them |
+
+Colour is decided by the cartridge header, not the file extension — Pokémon Yellow is a
+`.gb` file that runs in colour, and it is rendered as one while still being filed on the
+Game Boy shelf it was sold on.
 
 ### Test ROMs
 
@@ -45,12 +65,15 @@ unchanged for iOS and Android.
 |---|---|
 | Blargg `cpu_instrs` | 11 / 11 |
 | Blargg `instr_timing` | pass |
-| Blargg `mem_timing` | 3 / 3 |
-| Blargg `mem_timing-2` | 3 / 3 |
+| Blargg `mem_timing` / `mem_timing-2` | 3 / 3 each |
 | Blargg `dmg_sound` | 9 / 12 — the three wave RAM access-timing tests fail |
+| Blargg `cgb_sound` | 7 / 12 |
 | Blargg `oam_bug` | 6 / 8 |
-| dmg-acid2 | pixel-perfect |
-| Mooneye timing (`call`, `push`, `rst`, `ei`, `intr`, `tima_reload`) | pass |
+| Blargg `halt_bug` | fails |
+| Blargg `interrupt_time` | fails |
+| dmg-acid2 | passes |
+| Mooneye timing (`call`, `push`, `rst`, `ei`, `intr`, `tima_reload`, `tma_write_reloading`) | pass |
+| Mooneye MBC2 | 6 / 6 |
 | Mooneye `intr_2_mode0_timing` | fails — needs sub-scanline PPU mode timing |
 
 Playable and verified: Tetris, Dr. Mario, Kirby's Dream Land 1–2, Super Mario Land 1–2,
@@ -58,13 +81,16 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 
 ## Frontend
 
+- **Two shelves** — the library splits into Game Boy and Game Boy Color by file extension, which is how the cartridge was sold. Whether a game actually renders in colour is a separate question, decided from its header.
 - **Cartridge carousel** — each game's box art is composited into a Game Boy cartridge shell, with real blurred drop shadows and momentum scrolling.
-- **Settings** — display, audio and keybind tabs: screen fit (normal / crop / stretch), menu frame cap up to unlimited, VSync, HiDPI rendering, cartridge rendering toggle and master volume.
+- **Light and dark themes** — both palettes come off the app icons, which are exact inverses of one another. Follows the system appearance by default, with an auto / light / dark override.
+- **Iridescent backdrop** — the colour shelf, the settings sheet over it and any cartridge running in colour carry a slow drifting field of soft blobs, composited so that where two cross the colour is a third one neither owns.
+- **Settings** — display, menu, audio, system and keybind tabs: screen fit, menu frame cap, VSync, HiDPI, cartridge rendering, master volume, theme, Game Boy Color on/off and mono colourisation.
 - **Rebindable keys** — every button remappable from the UI.
-- **Persistence** — settings, keybinds, window size and window position are restored on launch, and battery-backed cartridges keep their saves.
+- **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
-- **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android.
-- **Native packaging** — a real macOS `.app` bundle with light/dark app icons, plus iOS and Android apps that share one touch layout, each with its own native icon.
+- **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android. `.gb` and `.gbc` both.
+- **Native packaging** — a real macOS `.app` bundle with light and dark app icons, plus iOS and Android apps that share one touch layout, each with its own native icon.
 
 ## Build
 
@@ -76,6 +102,9 @@ cd gameboy-emulator
 ```
 
 Already cloned flat? `git submodule update --init --recursive`
+
+ROMs are not in the repository. Drop your own into the app's support directory, or add
+them from inside the app.
 
 ### Desktop (macOS / Linux)
 
@@ -114,9 +143,10 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or open the `android/` folder in Android Studio and hit Run. `minSdk` is 21, both
-`arm64-v8a` and `x86_64` are built, and the covers and ROMs are packed into the APK,
-which makes it a large one.
+Or open the `android/` folder in Android Studio and hit Run. `minSdk` is 21, and both
+`arm64-v8a` and `x86_64` are built. The whole cover-art set is packed into the APK, which
+makes it a large one — around 260 MB, past what Google Play accepts, so as it stands this
+is a sideload build.
 
 ## Controls
 
@@ -133,30 +163,39 @@ Defaults — all rebindable in **Settings → Keybinds**.
 
 On iOS and Android the d-pad, A, B, Start and Select are drawn from scratch rather than
 overlaid on a bezel image, laid out from the screen size and tracked per finger so
-combinations work.
+combinations work. The d-pad can be swapped for an analogue stick reading eight
+directions, and **Settings → Controls → edit layout** moves and resizes every button, with
+snapping to centre lines, diagonals and mirrored pairs.
 
 ## Where things live
 
-ROMs and cover art are read from the app's support directory, and dropped-in games are
-copied there:
+ROMs and cover art are read from the app's support directory, and games added from inside
+the app are copied there:
 
 ```
 ~/Library/Application Support/com.iediot/gbemu/
-├── game-roms/      # .gb files, and a .sav beside each battery-backed cartridge
-└── settings.txt    # scale, frame cap, vsync, hidpi, volume, window geometry, keybinds
+├── game-roms/      # .gb and .gbc files, and a .sav beside each battery-backed cartridge
+└── settings.txt    # scale, frame cap, vsync, hidpi, volume, theme, window geometry, keybinds
 ```
 
 Cover art is matched to a ROM by fuzzy name comparison against `assets/artworks/`, so
 `Super Mario Land 2 - 6 Golden Coins (USA, Europe) (Rev 2).gb` still finds its box art.
+The two libraries are kept apart, `artworks/gb/` and `artworks/gbc/`, and a ROM looks in
+its own system's set first — a title released on both, like Space Invaders, has a cover in
+each and the names alone cannot tell them apart. The other set is still a fallback for
+anything that only ever had one.
 
 On iOS the same layout sits inside the app container. On Android the covers stay
-read-only inside the APK and the ROMs are seeded into internal storage on first launch.
+read-only inside the APK and any bundled ROMs are seeded into internal storage on first
+launch.
 
 ## Roadmap
 
 - [x] APU — all four channels
 - [x] Battery-backed saves written to `.sav`
+- [x] Game Boy Color — palettes, banking, HDMA, double speed
+- [x] Light and dark themes
 - [ ] Save states
 - [ ] Sub-scanline PPU timing (mid-scanline register writes, `intr_2_mode0_timing`)
 - [ ] Adjustable game speed / fast-forward
-- [ ] Game Boy Color support
+- [ ] Wave RAM access timing (`dmg_sound` 09 / 10 / 12)

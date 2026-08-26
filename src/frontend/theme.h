@@ -16,6 +16,7 @@ struct Theme {
     bool  dark;
     ImU32 page;        // the surface everything sits on
     ImU32 panel;       // settings sheet
+    ImU32 track;       // groove behind a slider, has to read against the sheet
     ImU32 surface;     // an inactive control
     ImU32 surface_hi;  // hovered
     ImU32 accent;      // active / selected
@@ -34,6 +35,7 @@ namespace theme {
         true,
         IM_COL32( 17,  22,   2, 255),
         IM_COL32( 28,  35,   4, 255),
+        IM_COL32( 12,  16,   2, 255),
         IM_COL32( 48,  56,   4, 255),
         IM_COL32( 72,  84,   5, 255),
         IM_COL32( 87, 102,   5, 255),
@@ -50,6 +52,7 @@ namespace theme {
         false,
         IM_COL32(119, 125,  70, 255),
         IM_COL32( 44,  53,   8, 255),
+        IM_COL32( 24,  30,   5, 255),
         IM_COL32( 54,  63,  12, 255),
         IM_COL32( 74,  86,  18, 255),
         IM_COL32( 92, 107,  16, 255),

@@ -374,8 +374,6 @@ void App::render_menu_mobile() {
                 break;
             }
         if (r_new >= 0) {
-            // a dual mode cart is on both shelves, so only move if the current one
-            // would not show it at all
             if (!in_tab(r_new, library_tab))
                 library_tab = in_tab(r_new, 0) ? 0 : 1;
             int local = 0;
@@ -1035,7 +1033,7 @@ void App::render_layout_editor() {
 
         float th = sh * 0.42f, ty = sy + (sh - th) * 0.5f;
         dl->AddRectFilled(ImVec2(sx, ty), ImVec2(sx + sw, ty + th),
-                          theme::at().panel, th * 0.5f);
+                          theme::at().track, th * 0.5f);
         dl->AddRectFilled(ImVec2(sx, ty), ImVec2(sx + sw * slider_v, ty + th),
                           theme::at().accent, th * 0.5f);
         dl->AddCircleFilled(ImVec2(sx + sw * slider_v, ty + th * 0.5f), sh * 0.42f,
