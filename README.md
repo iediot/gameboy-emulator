@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/sprites/icon-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/sprites/icon-light.png">
-  <img src="assets/sprites/icon-light.png" width="220" alt="gameboy-emu icon">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sprites/icon-light.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/sprites/icon-dark.png">
+  <img src="assets/sprites/icon-dark.png" width="220" alt="gameboy-emu icon">
 </picture>
 
 # gameboy-emu
