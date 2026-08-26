@@ -665,7 +665,7 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
         data[0xFF70] = 0xF9;
     }
 
-    if (!cgb_mode && cgb_enabled && dmg_colorize)
+    if (!cgb_mode && dmg_colorize)
         apply_compat_palette();
 
     data[0xFF00] = 0xCF; // P1

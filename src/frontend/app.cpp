@@ -563,9 +563,13 @@ void App::run() {
                 }
             }
             if (!apu->samples.empty()) {
-                if (volume < 0.999f)
+                // hearing is logarithmic, so a linear scale barely drops until the very
+                // end of its travel. cubing it spreads the quiet half over most of the bar
+                if (volume < 0.999f) {
+                    float gain = volume * volume * volume;
                     for (int16_t& sample : apu->samples)
-                        sample = (int16_t)(sample * volume);
+                        sample = (int16_t)(sample * gain);
+                }
                 SDL_QueueAudio(audio_device, apu->samples.data(),
                                (Uint32)(apu->samples.size() * sizeof(int16_t)));
                 apu->samples.clear();
@@ -739,7 +743,7 @@ void App::refresh_palette() {
     mem->dmg_colorize = dmg_colorize;
     if (mem->cgb_mode)
         return;
-    if (cgb_enabled && dmg_colorize)
+    if (dmg_colorize)
         mem->apply_compat_palette();
     else
         mem->compat_palette = false;
