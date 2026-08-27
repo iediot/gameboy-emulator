@@ -28,19 +28,26 @@ fi
 if [[ "$(uname -s)" == "Darwin" ]] && command -v xcodebuild > /dev/null; then
     echo "  ios: building (unsigned)"
     cmake -B build-ios-rel -S . -G Xcode -DCMAKE_SYSTEM_NAME=iOS > /dev/null 2>&1
+    rm -rf "$ROOT/build-ios-rel/out"
+    LOG="$ROOT/build-ios-rel/xcodebuild.log"
     xcodebuild -project build-ios-rel/gameboy_emu.xcodeproj -target gameboy_emu \
                -configuration Release -sdk iphoneos -arch arm64 \
                CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-               CONFIGURATION_BUILD_DIR="$ROOT/build-ios-rel/out" build > /dev/null 2>&1
-    APP="$ROOT/build-ios-rel/out/gameboy-emu.app"
-    if [[ -d "$APP" ]]; then
+               build > "$LOG" 2>&1
+    RC=$?
+    APP="$ROOT/build-ios-rel/Release/gameboy-emu.app"
+    # the resource copy phase leaves the .app behind even when the link fails, so the
+    # directory existing proves nothing, only the exit status and the binary inside do
+    if [[ $RC -eq 0 && -f "$APP/gameboy-emu" ]]; then
         rm -rf "$ROOT/build-ios-rel/Payload"
         mkdir -p "$ROOT/build-ios-rel/Payload"
         cp -R "$APP" "$ROOT/build-ios-rel/Payload/"
+        rm -f "$OUT/gameboy-emu-$VER-ios-unsigned.ipa"
         ( cd "$ROOT/build-ios-rel" && zip -qry "$OUT/gameboy-emu-$VER-ios-unsigned.ipa" Payload )
         echo "  ios: ok"
     else
-        echo "  ios: FAILED (no .app produced)"
+        echo "  ios: FAILED (see $LOG)"
+        grep -m5 "error:" "$LOG" | sed 's/^/    /'
     fi
 fi
 

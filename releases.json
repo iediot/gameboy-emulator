@@ -1,7 +1,7 @@
 {
   "name": "gameboy-emu",
   "version": "1.1.0",
-  "generated": "2026-08-27T12:47:15Z",
+  "generated": "2026-08-27T13:04:47Z",
   "artifacts": [
     {
       "platform": "macos",
@@ -13,8 +13,8 @@
     {
       "platform": "ios",
       "file": "gameboy-emu-1.1.0-ios-unsigned.ipa",
-      "bytes": 259401160,
-      "sha256": "520adfdc937bcc0632935e5bf3ea963e731ecf727c05036db68081f74b4179f4",
+      "bytes": 263518512,
+      "sha256": "bccd83e0a422b3cb9bf5c8e4a030045839395e09b069d75d385e8b047560f2cf",
       "notes": "Unsigned .ipa for sideloading with AltStore or Sideloadly."
     },
     {
