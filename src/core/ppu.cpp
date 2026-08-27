@@ -100,10 +100,8 @@ uint16_t Ppu::mode3_length_extra() {
 
         bool tile_done[33] = {};
         for (int i = 0; i < count; i++) {
-            if (xs[i] == 0) {          // wholly off the left edge, always a flat 11
-                extra += 11;
+            if (xs[i] >= 168)          // past the right edge, never fetched
                 continue;
-            }
             int pixel = (int)SCX + (int)xs[i] - 8;
             int tile = (pixel >> 3) & 31;
             if (!tile_done[tile]) {
@@ -334,7 +332,10 @@ void Ppu::step(uint8_t cycles) {
         mem.write_direct(LY_ADDR, 0);
         mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & 0xFC);
         window_line_counter = 0;
-        stat_line = false;
+        // the mode sources go quiet but the retained coincidence bit still drives the
+        // interrupt line, so switching back on with the same result raises no edge
+        uint8_t off_stat = mem.read_direct(STAT_ADDR);
+        stat_line = (off_stat & 0x40) && (off_stat & 0x04);
         prev_mode = 0;
         // the panel goes blank with the lcd, holding the last frame instead shows
         // whatever vram happened to contain while a game uploads with it switched off
@@ -355,6 +356,7 @@ void Ppu::step(uint8_t cycles) {
     if (!lcd_was_on) {
         lcd_was_on = true;
         scanline_cycles = 4;
+        lcd_first_line = true;
     }
 
     scanline_cycles += cycles;
@@ -363,6 +365,7 @@ void Ppu::step(uint8_t cycles) {
     if (scanline_cycles >= 456) {
         scanline_cycles -= 456;
         ly_counter++;
+        lcd_first_line = false;
 
         if (ly_counter >= 154) {
             ly_counter = 0;
@@ -401,12 +404,29 @@ void Ppu::step(uint8_t cycles) {
         mode = 0;
     }
 
+    // the line the lcd comes back on has no oam scan, stat reports hblank where mode 2
+    // would be and no mode 2 interrupt is raised
+    if (lcd_first_line && mode == 2)
+        mode = 0;
+
     uint8_t STAT = mem.read_direct(STAT_ADDR);
     bool coincidence = ly == mem.read_direct(LYC_ADDR);
 
-    bool line = (mode == 0 && (STAT & 0x08))
+    // the oam source also fires on the line vblank starts, so a game with only the
+    // mode 2 interrupt enabled still gets one at line 144 alongside the vblank
+    // colour hardware raises it one m-cycle ahead of the vblank instead of alongside it
+    bool oam_window = mode == 2
+                   || (ly_counter == 144 && scanline_cycles < 80 + kDotBias)
+                   || (mem.cgb_enabled && ly_counter == 143
+                       && scanline_cycles >= 456 - 8 + kDotBias);
+
+    // the hblank interrupt line goes up one m-cycle before stat starts reporting mode 0
+    bool hblank_int = ly_counter < 144
+                   && scanline_cycles >= 251 + mode3_extra + kDotBias;
+
+    bool line = (hblank_int && (STAT & 0x08))
              || (mode == 1 && (STAT & 0x10))
-             || (mode == 2 && (STAT & 0x20))
+             || (oam_window && (STAT & 0x20))
              || (coincidence && (STAT & 0x40));
 
     if (line && !stat_line)

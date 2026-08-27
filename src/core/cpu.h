@@ -17,6 +17,7 @@ private:
 public:
     // Constructor
     Cpu(Memory& memory, Ppu& ppu, Apu& apu);
+    void apply_boot_state();
     Ppu& ppu;
 
     // Registers

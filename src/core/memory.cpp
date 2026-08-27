@@ -14,14 +14,32 @@ void Memory::set_button(int button, bool pressed) {
         button_state |= (1 << button);
 }
 
+// the dma engine has its own view of the bus: everything from echo ram up reads out of
+// work ram, so a transfer sourced at $FE00 or $FF00 copies $DE00 or $DF00
+uint8_t Memory::dma_read(uint16_t address) {
+    if (address >= 0xE000)
+        address -= 0x2000;
+    return read(address);
+}
+
 void Memory::step_dma() {
-    if (!dma_active) return;
+    if (!dma_active && dma_delay == 0) return;
     if (++dma_tick < 4) return;
     dma_tick = 0;
     if (dma_delay) {
-        dma_delay--; return;
+        // a transfer already in flight keeps copying while the new one starts up
+        if (dma_active && dma_index < 160) {
+            data[0xFE00 + dma_index] = dma_read(dma_source + dma_index);
+            dma_index++;
+        }
+        if (--dma_delay == 0) {
+            dma_source = dma_pending_source;
+            dma_index  = 0;
+            dma_active = true;
+        }
+        return;
     }
-    data[0xFE00 + dma_index] = read(dma_source + dma_index);
+    data[0xFE00 + dma_index] = dma_read(dma_source + dma_index);
     if (++dma_index == 160) dma_active = false;
 }
 
@@ -169,7 +187,7 @@ uint8_t Memory::read(uint16_t address) {
     if (address >= 0x0000 && address <= 0x3FFF) {
         uint16_t bank = 0;
         if (mbc_type == MbcType::MBC1 && banking_mode == 1)
-            bank = (upper_bank << 5);
+            bank = mbc1_multicart ? (upper_bank << 4) : (upper_bank << 5);
         size_t num_banks = rom.size() / 0x4000;
         if (num_banks > 0)
             bank %= num_banks;
@@ -180,7 +198,8 @@ uint8_t Memory::read(uint16_t address) {
     if (address >= 0x4000 && address <= 0x7FFF) {
         uint16_t effective_bank;
         if (mbc_type == MbcType::MBC1)
-            effective_bank = (upper_bank << 5) | (rom_bank & 0x1F);
+            effective_bank = mbc1_multicart ? ((upper_bank << 4) | (rom_bank & 0x0F))
+                                            : ((upper_bank << 5) | (rom_bank & 0x1F));
         else
             effective_bank = rom_bank;  // MBC3 and MBC5 use rom_bank directly
 
@@ -246,21 +265,33 @@ uint8_t Memory::read(uint16_t address) {
     if (address >= 0xD000 && address <= 0xDFFF)
         return wram[wram_bank][address - 0xD000];
 
+    if (cgb_enabled) {
+        switch (address) {
+            case 0xFF4F: return vram_bank | 0xFE;
+            case 0xFF68: return data[0xFF68] | 0x40;
+            case 0xFF6A: return data[0xFF6A] | 0x40;
+            case 0xFF72: return data[0xFF72];
+            case 0xFF73: return data[0xFF73];
+            case 0xFF75: return data[0xFF75] | 0x8F;
+            case 0xFF76: return 0x00;
+            case 0xFF77: return 0x00;
+            default: break;
+        }
+    }
+
     if (cgb_mode) {
         switch (address) {
             case 0xFF4D:
                 return (double_speed ? 0x80 : 0x00)
                      | (speed_switch_armed ? 0x01 : 0x00) | 0x7E;
-            case 0xFF4F: return vram_bank | 0xFE;
             // bit 7 clear reports a transfer still in flight, the low bits count the
             // blocks that are left
             case 0xFF55:
                 return hdma_running ? (uint8_t)((hdma_left - 1) & 0x7F) : 0xFF;
-            case 0xFF68: return data[0xFF68] | 0x40;
             case 0xFF69: return bg_palette[data[0xFF68] & 0x3F];
-            case 0xFF6A: return data[0xFF6A] | 0x40;
             case 0xFF6B: return obj_palette[data[0xFF6A] & 0x3F];
             case 0xFF70: return (data[0xFF70] & 0x07) | 0xF8;
+            case 0xFF74: return data[0xFF74];
             default: break;
         }
     }
@@ -330,11 +361,8 @@ void Memory::write(uint16_t address, uint8_t value) {
     // DMA
     if (address == 0xFF46) {
         data[address] = value;
-        dma_source = value << 8;
-        dma_index  = 0;
-        dma_tick   = 0;
-        dma_delay  = 2;
-        dma_active = true;
+        dma_pending_source = value << 8;
+        dma_delay = 2;
         return;
     }
 
@@ -641,6 +669,21 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
 
     // bit 7 of the cgb flag marks a cartridge that knows about the colour hardware,
     // anything else keeps running as a dmg
+    // a multicart carries several games behind a 4 bit bank number, and announces
+    // itself only by repeating the nintendo logo at each game's header
+    mbc1_multicart = false;
+    if (mbc_type == MbcType::MBC1 && rom.size() == 0x100000) {
+        int logos = 0;
+        for (size_t base = 0; base < rom.size(); base += 0x40000) {
+            bool match = true;
+            for (int i = 0; i < 0x30 && match; i++)
+                match = rom[base + 0x104 + i] == rom[0x104 + i];
+            if (match)
+                logos++;
+        }
+        mbc1_multicart = logos >= 3;
+    }
+
     cgb_mode = cgb_enabled && (rom.size() > 0x0143) && (rom[0x0143] & 0x80);
 
     vram_bank = 0;
@@ -665,10 +708,16 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
         data[0xFF70] = 0xF9;
     }
 
+    // the boot rom leaves the palette indices where writing the compatibility set left them
+    if (cgb_enabled && !cgb_mode) {
+        data[0xFF68] = 0xC8;
+        data[0xFF6A] = 0xD0;
+    }
+
     if (!cgb_mode && dmg_colorize)
         apply_compat_palette();
 
-    data[0xFF00] = 0xCF; // P1
+    data[0xFF00] = cgb_enabled ? 0xFF : 0xCF; // P1
     data[0xFF02] = 0x7E; // SC
     data[0xFF07] = 0xF8; // TAC
     data[0xFF0F] = 0xE1; // IF

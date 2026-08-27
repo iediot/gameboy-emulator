@@ -18,6 +18,29 @@ Cpu::Cpu(Memory& memory, Ppu& ppu_ref, Apu& apu) : mem(memory), ppu(ppu_ref), ap
     PC = 0x0100;
 }
 
+void Cpu::apply_boot_state() {
+    if (!mem.cgb_enabled)
+        return;
+    A = 0x11;
+    F = 0x80;
+    B = 0x00;
+    C = 0x00;
+    if (mem.cgb_mode) {
+        D = 0xFF;
+        E = 0x56;
+        H = 0x00;
+        L = 0x0D;
+    } else {
+        D = 0x00;
+        E = 0x08;
+        H = 0x00;
+        L = 0x7C;
+    }
+    SP = 0xFFFE;
+    PC = 0x0100;
+    internal_div = 0x2674;
+}
+
 uint8_t main_opcode_cycles[256] = { // done in m-cycles, so *4 for t-cycles
 //  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
     1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1, // 0
@@ -453,6 +476,10 @@ void Cpu::do_bus() {
             // and a tma written on that same cycle is what the reload picks up
             if (bus_addr == 0xFF06 && tima_reloaded)
                 mem.write_direct(0xFF05, bus_val);
+            // the bus lands after the peripherals have had this cycle, so the lcd would
+            // otherwise not see its own control register until the next one
+            if (bus_addr == 0xFF40)
+                ppu.step(0);
         }
     }
     bus_kind = BUS_NONE;
@@ -489,30 +516,27 @@ uint8_t Cpu::step() {
     }
 
     if (IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F) != 0) {
-        tick(12);
-        uint8_t pending = mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F;
+        tick(8);
+        IME = false;
+        sp_step(-1);
+        write_and_tick(SP, (PC >> 8) & 0xFF);
 
-        if (pending & 0x01) {
-            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x01);
-            IME = false;
-            rst(0x40);
-        } else if (pending & 0x02) {
-            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x02);
-            IME = false;
-            rst(0x48);
-        } else if (pending & 0x04) {
-            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x04);
-            IME = false;
-            rst(0x50);
-        } else if (pending & 0x08) {
-            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x08);
-            IME = false;
-            rst(0x58);
-        } else if (pending & 0x10) {
-            mem.write(0xFF0F, mem.read(0xFF0F) & ~0x10);
-            IME = false;
-            rst(0x60);
-        }
+        // the vector is picked only now, so a push that landed on ie can still cancel
+        // the dispatch or hand it to a different interrupt, a push onto the low byte
+        // comes too late to change anything
+        uint8_t pending = mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F;
+        uint16_t vector = 0x0000;
+        for (int i = 0; i < 5; i++)
+            if (pending & (1 << i)) {
+                vector = 0x40 + i * 8;
+                mem.write(0xFF0F, mem.read(0xFF0F) & ~(1 << i));
+                break;
+            }
+
+        sp_step(-1);
+        write_and_tick(SP, PC & 0xFF);
+        PC = vector;
+        tick(4);
     }
 
     uint8_t opcode = read_and_tick(PC);
@@ -3359,7 +3383,9 @@ uint8_t Cpu::step() {
         }
 
     case 0xFB: { // EI
-            ime_pending = 2;
+            // a second ei while one is already in flight does not restart the delay
+            if (!IME && ime_pending == 0)
+                ime_pending = 2;
             break;
         }
 

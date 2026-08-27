@@ -725,10 +725,7 @@ void App::load_rom(const std::string& name) {
     mem->cgb_enabled = cgb_enabled;
     mem->dmg_colorize = dmg_colorize;
     mem->load_rom(rom_data);
-    // the boot rom hands the game its hardware id in A, colour titles branch on it to
-    // decide whether to bring up their cgb path at all
-    if (mem->cgb_mode)
-        cpu->A = 0x11;
+    cpu->apply_boot_state();
 
     load_battery_ram(name);
     state = AppState::PLAYING;

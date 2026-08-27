@@ -42,6 +42,7 @@ public:
     uint16_t scanline_cycles = 0;
     uint8_t ly_counter = 0;
     bool lcd_was_on = true;
+    bool lcd_first_line = false;
     // finished argb pixels, the dmg shades are baked in here so both the colour and the
     // monochrome path hand the frontend the same thing
     uint32_t framebuffer[144][160] = {};

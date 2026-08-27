@@ -61,20 +61,38 @@ Game Boy shelf it was sold on.
 
 ### Test ROMs
 
+Run against [c-sp/game-boy-test-roms](https://github.com/c-sp/game-boy-test-roms) v7.0.
+
 | Suite | Result |
 |---|---|
 | Blargg `cpu_instrs` | 11 / 11 |
 | Blargg `instr_timing` | pass |
-| Blargg `mem_timing` / `mem_timing-2` | 3 / 3 each |
+| Blargg `mem_timing` / `mem_timing-2` | 3 / 3, 4 / 4 |
+| Blargg `halt_bug` | pass |
 | Blargg `dmg_sound` | 9 / 12 — the three wave RAM access-timing tests fail |
 | Blargg `cgb_sound` | 7 / 12 |
 | Blargg `oam_bug` | 6 / 8 |
-| Blargg `halt_bug` | fails |
 | Blargg `interrupt_time` | fails |
-| dmg-acid2 | passes |
-| Mooneye timing (`call`, `push`, `rst`, `ei`, `intr`, `tima_reload`, `tma_write_reloading`) | pass |
-| Mooneye MBC2 | 6 / 6 |
-| Mooneye `intr_2_mode0_timing` | fails — needs sub-scanline PPU mode timing |
+| dmg-acid2 | pixel-exact, on both a Game Boy and a Game Boy Color |
+| cgb-acid2 | pixel-exact |
+| cgb-acid-hell | 176 of 23040 pixels off |
+
+Mooneye is **93 / 96** on the tests that apply to the two consoles this emulates — the
+DMG0, MGB, SGB, SGB2, CGB0 and AGB revisions, the manual-only screenshot tests and the
+boot-ROM dumper are excluded.
+
+| Mooneye group | Result |
+|---|---|
+| `acceptance` (CPU, interrupts, HALT, EI, OAM DMA, serial) | 30 / 30 |
+| `acceptance/bits`, `/instr`, `/interrupts`, `/oam_dma` | 8 / 8 |
+| `acceptance/timer` | 12 / 13 — `rapid_toggle` |
+| `acceptance/ppu` | 10 / 12 — `lcdon_timing`, `lcdon_write_timing` |
+| `emulator-only` (MBC1, MBC2, MBC5) | 28 / 28 |
+| `misc` — Game Boy Color boot registers, DIV, I/O and PPU | 5 / 5 |
+
+The colourisation of monochrome cartridges is checked the same way: dmg-acid2 run on
+Game Boy Color hardware picks its palette out of the boot ROM's compatibility tables, and
+the result matches the reference screenshot exactly, all six colours.
 
 Playable and verified: Tetris, Dr. Mario, Kirby's Dream Land 1–2, Super Mario Land 1–2,
 Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yellow.
@@ -196,6 +214,6 @@ launch.
 - [x] Game Boy Color — palettes, banking, HDMA, double speed
 - [x] Light and dark themes
 - [ ] Save states
-- [ ] Sub-scanline PPU timing (mid-scanline register writes, `intr_2_mode0_timing`)
+- [ ] The scanline the LCD comes back on (`lcdon_timing`, `lcdon_write_timing`)
 - [ ] Adjustable game speed / fast-forward
 - [ ] Wave RAM access timing (`dmg_sound` 09 / 10 / 12)

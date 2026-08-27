@@ -65,6 +65,7 @@ public:
     uint8_t banking_mode = 0;
     uint16_t rom_bank = 1;
     uint8_t upper_bank = 0;
+    bool mbc1_multicart = false;
 
     std::vector<uint8_t> external_ram;
     bool ram_enabled = false;
@@ -77,10 +78,12 @@ public:
 
     bool dma_active = false;
     uint16_t dma_source = 0;
+    uint16_t dma_pending_source = 0;
     uint8_t dma_index = 0;
     uint8_t dma_tick = 0;
     uint8_t dma_delay = 0;
     void step_dma();
+    uint8_t dma_read(uint16_t address);
 
     // dmg oam corruption bug, the ppu is mid scan and the bus fight mangles a row
     uint16_t oam_word(int row, int word) const;
