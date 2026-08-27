@@ -563,15 +563,17 @@ void App::run() {
                 }
             }
             if (!apu->samples.empty()) {
-                // hearing is logarithmic, so a linear scale barely drops until the very
-                // end of its travel. cubing it spreads the quiet half over most of the bar
-                if (volume < 0.999f) {
-                    float gain = volume * volume * volume;
-                    for (int16_t& sample : apu->samples)
-                        sample = (int16_t)(sample * gain);
+                if (SDL_GetQueuedAudioSize(audio_device) <= 16384) {
+                    // hearing is logarithmic, so a linear scale barely drops until the very
+                    // end of its travel. cubing it spreads the quiet half over most of the bar
+                    if (volume < 0.999f) {
+                        float gain = volume * volume * volume;
+                        for (int16_t& sample : apu->samples)
+                            sample = (int16_t)(sample * gain);
+                    }
+                    SDL_QueueAudio(audio_device, apu->samples.data(),
+                                   (Uint32)(apu->samples.size() * sizeof(int16_t)));
                 }
-                SDL_QueueAudio(audio_device, apu->samples.data(),
-                               (Uint32)(apu->samples.size() * sizeof(int16_t)));
                 apu->samples.clear();
             }
             render_game();
