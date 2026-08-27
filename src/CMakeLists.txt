@@ -33,6 +33,7 @@ elseif(GB_IOS)
     # roms are NOT bundled by default: a published build must not carry commercial
     # cartridges. -DGB_BUNDLE_ROMS=ON is for personal device builds only
     set(GB_RESOURCES ${GB_ASSETS_DIR}/sprites/cartridge.png
+            ${GB_ASSETS_DIR}/sprites/trash.png
             ${GB_ASSETS_DIR}/artworks)
     if(GB_BUNDLE_ROMS)
         list(APPEND GB_RESOURCES ${GB_ROMS_DIR}/game-roms)
@@ -76,6 +77,7 @@ else()
         # thing is double clickable, assets ride along in Contents/Resources
         set(GB_MAC_ASSETS ${GB_ROOT_DIR}/mac/AppIcon.icns
                 ${GB_ASSETS_DIR}/sprites/cartridge.png
+                ${GB_ASSETS_DIR}/sprites/trash.png
                 ${GB_ASSETS_DIR}/sprites/icon-mac-light.png
                 ${GB_ASSETS_DIR}/sprites/icon-mac-dark.png
                 ${GB_ASSETS_DIR}/artworks)

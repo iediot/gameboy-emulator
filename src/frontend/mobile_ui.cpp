@@ -365,7 +365,13 @@ void App::render_game_mobile() {
 // swipe carousel, one big cover framed at a time with arrows, a title and a play button
 void App::render_menu_mobile() {
     // a finished import drops a new rom into the folder, pick it up before drawing
-    if (gb_take_import_done()) {
+    bool imported = gb_take_import_done();
+    if (imported && mod_import) {
+        imported = false;
+        mod_import = false;
+        scan_mods(mod_rom);
+    }
+    if (imported) {
         scan_roms();
         int r_new = -1;
         for (int i = 0; i < (int)rom_list.size(); i++)
@@ -602,21 +608,32 @@ void App::render_menu_mobile() {
         ImGui::SetCursorPos(ImVec2(0, title_y));
         centre_text(display_name(rom_list[r_centre]).c_str());
 
-        // play and delete, side by side
-        float btn_h = h * 0.07f;
-        float play_w = w * 0.34f, del_w = w * 0.22f, gap = w * 0.03f;
-        float row_x = (w - (play_w + gap + del_w)) * 0.5f;
+        // play, mods and delete, side by side
+        float btn_h = h * 0.05f;
+        float gap = w * 0.03f;
+        float row_w = w * 0.34f + gap + w * 0.22f;
+        float del_w = btn_h;
+        float rest = row_w - del_w - gap * 2.0f;
+        float play_w = rest * 0.56f;
+        float mods_w = rest - play_w;
+        float row_x = (w - row_w) * 0.5f;
         float row_y = title_y + h * 0.05f;
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
         if (glass::button("play", ImVec2(play_w, btn_h)))
             load_rom(rom_list[r_centre]);
         ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
+        if (glass::button("mods", ImVec2(mods_w, btn_h))) {
+            scan_mods(rom_list[r_centre]);
+            ImGui::OpenPopup("mods");
+        }
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 0.50f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.10f, 0.05f, 0.50f));
-        if (glass::button("delete", ImVec2(del_w, btn_h)))
+        if (trash_button("##delete", row_x + play_w + mods_w + gap * 2.0f, row_y, del_w, btn_h))
             ImGui::OpenPopup("confirm_delete");
         ImGui::PopStyleColor(3);
+
+        draw_mods(w, h);
 
         // a second, deliberate tap is required so a stray delete never wipes a game by accident
         ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));

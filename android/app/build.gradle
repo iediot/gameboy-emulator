@@ -104,6 +104,7 @@ def stageGbAssets = tasks.register('stageGbAssets', Copy) {
     into stagedAssets
     from(new File(repoRoot, 'assets/sprites')) {
         include 'cartridge.png'
+        include 'trash.png'
     }
     from(new File(repoRoot, 'assets/artworks/gb')) {
         into 'artworks/gb'

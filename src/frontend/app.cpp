@@ -13,6 +13,9 @@
 #include <nfd.h> // native desktop file dialog, no ios equivalent
 #endif
 #include "app.h"
+#if GB_MOBILE
+extern "C" void gb_present_document_picker(const char* dest_dir);
+#endif
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
@@ -160,6 +163,11 @@ void App::create_video() {
         SDL_SetTextureBlendMode(cartridge_sprite, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(cartridge_sprite, SDL_ScaleModeLinear);
     }
+    trash_sprite = IMG_LoadTexture(renderer, trash_path.c_str());
+    if (trash_sprite) {
+        SDL_SetTextureBlendMode(trash_sprite, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(trash_sprite, SDL_ScaleModeLinear);
+    }
     cartridge_shadow = nullptr;
     rect_shadow = nullptr;
     build_shadow();
@@ -189,6 +197,7 @@ void App::destroy_video() {
     cover_list.clear();
     SDL_DestroyTexture(texture);
     SDL_DestroyTexture(cartridge_sprite);
+    SDL_DestroyTexture(trash_sprite);
     SDL_DestroyTexture(cartridge_shadow);
     SDL_DestroyTexture(rect_shadow);
     SDL_CloseAudioDevice(audio_device);
@@ -232,18 +241,21 @@ void App::init_paths() {
     std::string p = pref ? pref : "";
     if (pref) SDL_free(pref);
     rom_folder    = p + "game-roms/"; // writable copy so roms can be added and deleted
+    mods_folder   = p + "mods/";
     settings_path = p + "settings.txt";
 
 #if GB_ANDROID
     // assets live inside the apk, sdl_rwops resolves these relative paths through
     // the asset manager, so there is no base path to prefix them with
     cartridge_path = "cartridge.png";
+    trash_path     = "trash.png";
     artwork_folder = "artworks/";
 #else
     char* base = SDL_GetBasePath();
     std::string b = base ? base : "";
     if (base) SDL_free(base);
     cartridge_path = b + "cartridge.png";
+    trash_path     = b + "trash.png";
     artwork_folder = b + "artworks/";      // read-only, shipped in the bundle
 #endif
 
@@ -258,6 +270,7 @@ void App::init_paths() {
     std::string p = pref ? pref : "";
     if (pref) SDL_free(pref);
     settings_path = p + "settings.txt";
+    mods_folder   = p + "mods/";
 
     // inside a .app the assets sit in Contents/Resources, a plain build off the
     // source tree keeps the old relative paths so running from the ide still works
@@ -274,6 +287,7 @@ void App::init_paths() {
     bundled = !res.empty();
     if (bundled) {
         cartridge_path  = res + "cartridge.png";
+        trash_path      = res + "trash.png";
         icon_light_path = res + "icon-mac-light.png";
         icon_dark_path  = res + "icon-mac-dark.png";
         artwork_folder  = res + "artworks/";
@@ -300,6 +314,7 @@ void App::init_paths() {
         std::error_code aec;
         if (!exe.empty() && std::filesystem::exists(exe + "assets/artworks", aec)) {
             cartridge_path  = exe + "assets/sprites/cartridge.png";
+            trash_path      = exe + "assets/sprites/trash.png";
             icon_light_path = exe + "assets/sprites/icon-mac-light.png";
             icon_dark_path  = exe + "assets/sprites/icon-mac-dark.png";
             artwork_folder  = exe + "assets/artworks/";
@@ -307,6 +322,7 @@ void App::init_paths() {
             std::filesystem::create_directories(rom_folder, aec);
         } else {
             cartridge_path  = "../assets/sprites/cartridge.png";
+            trash_path      = "../assets/sprites/trash.png";
             icon_light_path = "../assets/sprites/icon-mac-light.png";
             icon_dark_path  = "../assets/sprites/icon-mac-dark.png";
             artwork_folder  = "../assets/artworks/";
@@ -708,6 +724,40 @@ void App::scan_roms() {
     }
 }
 
+// an ips patch is a list of records: a 3 byte offset, a 2 byte length, then that many
+// bytes, or a zero length meaning a 2 byte run count and one byte to repeat
+static void apply_ips(std::vector<uint8_t>& rom, const std::vector<uint8_t>& p) {
+    if (p.size() < 8 || p[0] != 'P' || p[1] != 'A' || p[2] != 'T' || p[3] != 'C' || p[4] != 'H')
+        return;
+    size_t i = 5;
+    while (i + 3 <= p.size()) {
+        if (p[i] == 'E' && p[i + 1] == 'O' && p[i + 2] == 'F')
+            return;
+        if (i + 5 > p.size())
+            return;
+        size_t off = ((size_t)p[i] << 16) | ((size_t)p[i + 1] << 8) | p[i + 2];
+        size_t len = ((size_t)p[i + 3] << 8) | p[i + 4];
+        i += 5;
+        if (len == 0) {
+            if (i + 3 > p.size())
+                return;
+            size_t run = ((size_t)p[i] << 8) | p[i + 1];
+            uint8_t val = p[i + 2];
+            i += 3;
+            if (rom.size() < off + run)
+                rom.resize(off + run, 0);
+            std::fill_n(rom.begin() + (long)off, run, val);
+        } else {
+            if (i + len > p.size())
+                return;
+            if (rom.size() < off + len)
+                rom.resize(off + len, 0);
+            std::copy_n(p.begin() + (long)i, len, rom.begin() + (long)off);
+            i += len;
+        }
+    }
+}
+
 // loads the rom, moved from main
 void App::load_rom(const std::string& name) {
     // rebuild the emulator
@@ -724,6 +774,18 @@ void App::load_rom(const std::string& name) {
     }
     std::vector<uint8_t> rom_data{std::istreambuf_iterator<char>(rom_file),
         std::istreambuf_iterator<char>()};
+    scan_mods(name);
+    for (size_t i = 0; i < mod_list.size(); i++) {
+        if (!mod_on[i])
+            continue;
+        std::ifstream pf(mod_dir(name) + mod_list[i], std::ios::binary);
+        if (!pf)
+            continue;
+        std::vector<uint8_t> patch{std::istreambuf_iterator<char>(pf),
+            std::istreambuf_iterator<char>()};
+        apply_ips(rom_data, patch);
+    }
+
     mem->cgb_enabled = cgb_enabled;
     mem->dmg_colorize = dmg_colorize;
     mem->load_rom(rom_data);
@@ -830,6 +892,286 @@ void App::render_game() {
 
     SDL_RenderPresent(renderer);
     if (!in_live_resize) pace(kGbFps);
+}
+
+std::string App::mod_dir(const std::string& rom) const {
+    return mods_folder + std::filesystem::path(rom).stem().string() + "/";
+}
+
+void App::scan_mods(const std::string& rom) {
+    mod_rom = rom;
+    mod_list.clear();
+    mod_on.clear();
+
+    std::error_code ec;
+    std::string dir = mod_dir(rom);
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+        std::string ext = e.path().extension().string();
+        for (char& c : ext)
+            c = (char)std::tolower((unsigned char)c);
+        if (ext == ".ips")
+            mod_list.push_back(e.path().filename().string());
+    }
+    std::sort(mod_list.begin(), mod_list.end());
+    mod_on.assign(mod_list.size(), 0);
+    mod_sel.assign(mod_list.size(), 0);
+    mod_select = false;
+
+    std::ifstream f(dir + "enabled.txt");
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        for (size_t i = 0; i < mod_list.size(); i++)
+            if (mod_list[i] == line)
+                mod_on[i] = 1;
+    }
+}
+
+void App::save_mods() {
+    std::error_code ec;
+    std::filesystem::create_directories(mod_dir(mod_rom), ec);
+    std::ofstream f(mod_dir(mod_rom) + "enabled.txt", std::ios::trunc);
+    for (size_t i = 0; i < mod_list.size(); i++)
+        if (mod_on[i])
+            f << mod_list[i] << "\n";
+}
+
+void App::add_mod() {
+    std::error_code ec;
+    std::filesystem::create_directories(mod_dir(mod_rom), ec);
+#if GB_MOBILE
+    mod_import = true;
+    gb_present_document_picker(mod_dir(mod_rom).c_str());
+#else
+    nfdchar_t* path = nullptr;
+    nfdfilteritem_t filter[1] = {{"IPS patch", "ips"}};
+    if (NFD_OpenDialog(&path, filter, 1, nullptr) == NFD_OKAY) {
+        std::filesystem::copy_file(path,
+            mod_dir(mod_rom) + std::filesystem::path(path).filename().string(),
+            std::filesystem::copy_options::overwrite_existing, ec);
+        NFD_FreePath(path);
+        scan_mods(mod_rom);
+    }
+#endif
+}
+
+void App::draw_mods(float w, float h) {
+#if GB_MOBILE
+    float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
+    int rows = 4;
+    float pw = w * 0.86f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * ui, 12.0f * ui));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * ui, 12.0f * ui));
+#else
+    float ui = 1.0f;
+    int rows = 5;
+    float pw = std::min(w * 0.62f, 440.0f);
+#endif
+    float pad = 22.0f * ui, btn_h = 40.0f * ui;
+    float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+    float head_h = ImGui::GetTextLineHeight() + pad;
+    float ph = std::min(head_h + pad * 2.0f + rows * row_h + btn_h, h * 0.85f);
+
+    ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
+    if (ImGui::BeginPopupModal("mods", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoBackground)) {
+
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImVec2 ws = ImGui::GetWindowSize();
+        ImVec2 sheet1(wp.x + ws.x, wp.y + ws.y);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        dl->AddRectFilled(wp, sheet1, theme::at().panel, 22.0f * ui);
+        // the sheet is opaque, so the field goes onto it rather than behind it
+        if (iridescence > 0.0f)
+            iri::field_rounded(dl, wp, sheet1, 22.0f * ui,
+                               (float)ImGui::GetTime(), iridescence * 0.5f);
+
+        std::string title = display_name(mod_rom);
+        ImVec2 ts = ImGui::CalcTextSize(title.c_str());
+        dl->AddText(ImVec2(wp.x + (ws.x - ts.x) * 0.5f, wp.y + pad * 0.55f),
+                    theme::at().text, title.c_str());
+        float sep_y = wp.y + pad * 0.55f + ts.y + pad * 0.45f;
+        dl->AddLine(ImVec2(wp.x + pad, sep_y), ImVec2(sheet1.x - pad, sep_y),
+                    glass::border(), glass::hairline());
+
+        float inner_w = ws.x - pad * 2.0f;
+        float body_y  = sep_y - wp.y + pad * 0.6f;
+        float body_h  = ws.y - body_y - pad - btn_h - ImGui::GetStyle().ItemSpacing.y;
+
+        ImGui::SetCursorPos(ImVec2(pad, body_y));
+        ImGui::BeginChild("mods_body", ImVec2(inner_w, body_h), false,
+                          ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+        if (mod_list.empty())
+            ImGui::TextDisabled("no patches yet, add one below");
+
+        float ctrl_gap = 14.0f * ui;
+        float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        ImDrawList* bdl = ImGui::GetWindowDrawList();
+        for (int i = 0; i < (int)mod_list.size(); i++) {
+            ImGui::PushID(i);
+
+            float fh  = ImGui::GetFrameHeight();
+            float box = fh * 0.58f;
+            float th  = fh * 0.62f;
+            float tw  = th * 1.95f;
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+
+            if (mod_select) {
+                if (ImGui::InvisibleButton("##sel", ImVec2(box, fh)))
+                    mod_sel[i] = mod_sel[i] ? 0 : 1;
+                float by = rp.y + (fh - box) * 0.5f;
+                ImVec2 b0(rp.x, by), b1(rp.x + box, by + box);
+                bdl->AddRectFilled(b0, b1, mod_sel[i] ? theme::at().surface
+                                                      : theme::at().track, box * 0.26f);
+                glass::rect(bdl, b0, b1, box * 0.26f);
+                if (mod_sel[i]) {
+                    float t = std::max(1.6f, box * 0.16f);
+                    bdl->AddLine(ImVec2(b0.x + box * 0.24f, b0.y + box * 0.52f),
+                                 ImVec2(b0.x + box * 0.44f, b0.y + box * 0.72f),
+                                 theme::at().accent, t);
+                    bdl->AddLine(ImVec2(b0.x + box * 0.44f, b0.y + box * 0.72f),
+                                 ImVec2(b0.x + box * 0.78f, b0.y + box * 0.28f),
+                                 theme::at().accent, t);
+                }
+                ImGui::SameLine();
+            }
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(mod_list[i].c_str());
+            ImGui::SameLine();
+
+            ImVec2 tp(right_edge - ctrl_gap - tw, rp.y);
+            ImGui::SetCursorScreenPos(tp);
+            if (ImGui::InvisibleButton("##on", ImVec2(tw, fh))) {
+                mod_on[i] = mod_on[i] ? 0 : 1;
+                save_mods();
+            }
+            bool hot = ImGui::IsItemHovered();
+            bool on  = mod_on[i] != 0;
+            float ty = tp.y + (fh - th) * 0.5f;
+            ImU32 track = on ? (hot ? theme::at().accent : theme::at().button)
+                             : (hot ? theme::at().surface : theme::at().track);
+            bdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
+            float kr = th * 0.5f - 3.0f;
+            float kx = on ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
+            bdl->AddCircleFilled(ImVec2(kx, ty + th * 0.5f), kr, IM_COL32(255, 255, 255, 255), 24);
+
+            ImGui::PopID();
+        }
+        {
+            ImGuiIO& sio = ImGui::GetIO();
+            float cur     = ImGui::GetScrollY();
+            float view_h  = ImGui::GetWindowSize().y;
+            float content = ImGui::GetCursorPosY();
+            float maxs    = std::max(0.0f, content - view_h);
+            bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+            if (hovered && sio.MouseWheel != 0.0f) {
+                float base = (std::abs(mods_scroll - cur) > 0.5f) ? mods_scroll : cur;
+                mods_scroll = base - sio.MouseWheel * 60.0f;
+            }
+            mods_scroll = std::clamp(mods_scroll, 0.0f, maxs);
+            if (std::abs(mods_scroll - cur) > 0.5f) {
+                float next = cur + (mods_scroll - cur) * std::min(1.0f, sio.DeltaTime * 16.0f);
+                if (std::abs(mods_scroll - next) < 0.5f) next = mods_scroll;
+                ImGui::SetScrollY(next);
+            } else {
+                mods_scroll = cur;
+            }
+        }
+        ImGui::EndChild();
+
+        int picked = 0;
+        for (size_t i = 0; i < mod_sel.size(); i++)
+            picked += mod_sel[i] ? 1 : 0;
+
+        float bw = (inner_w - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+        ImGui::SetCursorPos(ImVec2(pad, ws.y - pad - btn_h));
+        if (glass::button("add", ImVec2(bw, btn_h)))
+            add_mod();
+        ImGui::SameLine();
+        if (picked > 0) {
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 0.50f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.35f, 0.10f, 0.05f, 0.50f));
+            if (glass::button("delete", ImVec2(bw, btn_h)))
+                ImGui::OpenPopup("confirm_mod_delete");
+            ImGui::PopStyleColor(3);
+        } else if (glass::button("select", ImVec2(bw, btn_h))) {
+            mod_select = !mod_select;
+            std::fill(mod_sel.begin(), mod_sel.end(), 0);
+        }
+        ImGui::SameLine();
+        if (glass::button("apply", ImVec2(bw, btn_h))) {
+            save_mods();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+        if (ImGui::BeginPopupModal("confirm_mod_delete", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoMove)) {
+            std::string ask = "delete " + std::to_string(picked) +
+                              (picked == 1 ? " patch ?" : " patches ?");
+            ImGui::TextUnformatted(ask.c_str());
+            ImGui::Dummy(ImVec2(0, h * 0.02f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+            if (glass::button("delete", ImVec2(bw, btn_h))) {
+                std::error_code ec;
+                for (size_t i = 0; i < mod_list.size(); i++)
+                    if (mod_sel[i])
+                        std::filesystem::remove(mod_dir(mod_rom) + mod_list[i], ec);
+                scan_mods(mod_rom);
+                save_mods();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (glass::button("cancel", ImVec2(bw, btn_h)))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar(2);
+
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+#if GB_MOBILE
+    ImGui::PopStyleVar(2);
+#endif
+}
+
+bool App::trash_button(const char* id, float x, float y, float bw, float bh) {
+    ImGui::SetCursorPos(ImVec2(x, y));
+    bool clicked = ImGui::Button(id, ImVec2(bw, bh));
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
+    glass::rect(dl, p0, p1, ImGui::GetStyle().FrameRounding);
+
+    if (trash_sprite) {
+        int tw = 1, th = 1;
+        SDL_QueryTexture(trash_sprite, nullptr, nullptr, &tw, &th);
+        float fit = std::min(p1.x - p0.x, p1.y - p0.y) * 0.46f;
+        float iw = fit, ih = fit;
+        if (tw > th) ih = fit * (float)th / (float)tw;
+        else         iw = fit * (float)tw / (float)th;
+        ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+        dl->AddImage((ImTextureID)trash_sprite,
+                     ImVec2(c.x - iw * 0.5f, c.y - ih * 0.5f),
+                     ImVec2(c.x + iw * 0.5f, c.y + ih * 0.5f),
+                     ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 235));
+    }
+    return clicked;
 }
 
 void App::add_game() {
@@ -1930,8 +2272,13 @@ void App::render_menu() {
         centre_text(display_name(rom_list[r_centre]).c_str(), title_y);
 
         float btn_h  = h * 0.09f;
-        float play_w = w * 0.14f, del_w = w * 0.10f, gap = w * 0.015f;
-        float row_x  = (w - (play_w + gap + del_w)) * 0.5f;
+        float gap    = w * 0.015f;
+        float row_w  = w * 0.14f + gap + w * 0.10f;
+        float del_w  = btn_h;
+        float rest   = row_w - del_w - gap * 2.0f;
+        float play_w = rest * 0.56f;
+        float mods_w = rest - play_w;
+        float row_x  = (w - row_w) * 0.5f;
         float row_y  = title_y + h * 0.05f;
 
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
@@ -1939,12 +2286,19 @@ void App::render_menu() {
             load_rom(rom_list[r_centre]);
 
         ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
+        if (glass::button("mods", ImVec2(mods_w, btn_h))) {
+            scan_mods(rom_list[r_centre]);
+            ImGui::OpenPopup("mods");
+        }
+
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 0.50f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.35f, 0.10f, 0.05f, 0.50f));
-        if (glass::button("delete", ImVec2(del_w, btn_h)))
+        if (trash_button("##delete", row_x + play_w + mods_w + gap * 2.0f, row_y, del_w, btn_h))
             ImGui::OpenPopup("confirm_delete");
         ImGui::PopStyleColor(3);
+
+        draw_mods(w, h);
 
         ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 24));

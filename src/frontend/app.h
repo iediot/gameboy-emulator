@@ -63,6 +63,8 @@ private:
     std::string rom_folder;      // where .gb files are read from
     std::string artwork_folder;  // where cover art .png files live
     std::string cartridge_path;  // the cartridge shell the covers sit in
+    std::string trash_path;      // the delete button's icon
+    SDL_Texture* trash_sprite = nullptr;
     std::string icon_light_path; // window icon for a light system theme
     std::string icon_dark_path;  // window icon for a dark system theme
     bool bundled = false;        // running from a .app, the system owns the icon then
@@ -145,6 +147,20 @@ private:
     void refresh_palette();
     void save_battery_ram();
     void add_game();
+    std::string mods_folder;              // one folder of patches per game
+    std::string mod_rom;                  // the game the mods panel is showing
+    std::vector<std::string> mod_list;
+    std::vector<char> mod_on;
+    bool mod_import = false;              // the pending picker is adding a patch, not a rom
+    std::string mod_dir(const std::string& rom) const;
+    void scan_mods(const std::string& rom);
+    void save_mods();
+    void add_mod();
+    void draw_mods(float w, float h);
+    float mods_scroll = 0.0f;
+    bool mod_select = false;              // the list is picking patches to delete
+    std::vector<char> mod_sel;
+    bool trash_button(const char* id, float x, float y, float bw, float bh);
     void render_game();
     void handle_events();
     void setup_style();

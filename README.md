@@ -107,6 +107,7 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 - **Rebindable keys** — every button remappable from the UI.
 - **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
+- **Mods** — per game IPS patches. Each library entry has its own mods panel: add a patch, toggle it on or off, and the enabled ones are applied to the ROM in memory at load, so the file on disk is never touched. Two-step delete for removing a patch.
 - **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android. `.gb` and `.gbc` both.
 - **Native packaging** — a real macOS `.app` bundle with light and dark app icons, plus iOS and Android apps that share one touch layout, each with its own native icon.
 
@@ -193,6 +194,7 @@ the app are copied there:
 ```
 ~/Library/Application Support/com.iediot/gbemu/
 ├── game-roms/      # .gb and .gbc files, and a .sav beside each battery-backed cartridge
+├── mods/           # one folder per game, holding its .ips patches and which are enabled
 └── settings.txt    # scale, frame cap, vsync, hidpi, volume, theme, window geometry, keybinds
 ```
 
