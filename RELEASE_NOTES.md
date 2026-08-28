@@ -12,11 +12,22 @@ timers and mappers all implemented from the hardware documentation.
 
 ### New in this release
 
-- **Mods** — every game has a mods panel: add `.ips` patches, toggle them on or off, delete
-  them. Enabled patches are applied to the ROM in memory at load, so the file on disk is
-  left alone and unticking everything gives the stock game back.
-- Audio no longer falls behind after a phone call or any other interruption that takes the
-  audio device away.
+- **MBC3 real-time clock** — cartridges with a clock crystal now keep time. The counters
+  tick while the game runs, carry over correctly at every boundary, and catch up on the
+  time the console spent switched off, so a game that checks the date between sessions gets
+  the right answer. The clock is written into the `.sav` alongside the cartridge RAM, in
+  the layout the other emulators use.
+- **Link port** — serial transfers now complete instead of leaving the busy bit set
+  forever. Anything that started a transfer and waited for it used to hang.
+- **Sound on Game Boy Color hardware** — wave RAM access, the length counters across a
+  power cycle and the wave channel's start delay all behave the way the colour hardware
+  does rather than the way the original does. Blargg's `dmg_sound` and `cgb_sound` both
+  pass in full.
+- A glitching game that jumped into an undefined opcode used to take the whole app down
+  with it. It now locks up the emulated CPU on its own, which is what the hardware does.
+- Fixed the iridescent backdrop being drawn over the picture on a HiDPI display.
+- `EI` immediately followed by `HALT` no longer triggers the HALT bug, and a VRAM transfer
+  now costs the CPU the cycles it costs on hardware.
 
 ### Adding games
 
@@ -34,7 +45,8 @@ ships with the app, which is why the downloads are large.
 - Game Boy Color: colour palettes, banked VRAM/WRAM, HDMA, double speed, and the boot
   ROM's compatibility palettes for monochrome games
 - All four APU channels off the DIV frame sequencer
-- MBC1, MBC2, MBC3 and MBC5, with battery saves
+- MBC1, MBC2, MBC3 and MBC5, with battery saves and the MBC3 real-time clock
+- Serial link port, clocked off the divider the way the hardware does it
 - Light and dark themes that follow the system, and a touch layout editor on mobile
 - Per game IPS patches, applied in memory at load so the ROM file is never modified
 

@@ -36,11 +36,13 @@ settings, rebindable keys, and the whole thing compiles unchanged for iOS and An
 |---|---|
 | **CPU** | Full Sharp LR35902 set — 256 base + 256 CB-prefixed opcodes, M-cycle accurate, with the EI 1-instruction delay and the HALT bug |
 | **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, variable mode 3 length, and the DMG OAM corruption bug |
-| **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning |
+| **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning. The wave RAM access window, the length counters across a power cycle and the retrigger corruption all follow whichever console is being emulated |
 | **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection, including the reload-cycle write quirks |
 | **Interrupts** | VBlank, STAT, Timer and Joypad with correct dispatch timing and IME semantics |
 | **DMA** | OAM transfer via `$FF46`, cycle-stepped against the CPU |
-| **Cartridges** | MBC1, MBC2, MBC3 and MBC5 bank switching, with battery-backed RAM saved to `.sav` |
+| **Serial** | Link port shifted off the divider, with the transfer completing and raising its interrupt exactly as an unplugged cable does |
+| **Cartridges** | MBC1, MBC2, MBC3 and MBC5 bank switching, with battery-backed RAM saved to `.sav`, and the MBC3 real-time clock |
+| **Real-time clock** | The MBC3 crystal, with the six-bit seconds and minutes that wrap without carrying, the nine-bit day counter and its sticky overflow, latching, and catch-up across the time the console was off |
 | **Boot** | Post-boot register and I/O state, so games start without a boot ROM |
 
 ### Game Boy Color
@@ -61,38 +63,52 @@ Game Boy shelf it was sold on.
 
 ### Test ROMs
 
-Run against [c-sp/game-boy-test-roms](https://github.com/c-sp/game-boy-test-roms) v7.0.
+Run against [c-sp/game-boy-test-roms](https://github.com/c-sp/game-boy-test-roms) v7.0,
+through the headless runner in `tools/` — `tools/run-tests.sh <suite dir>` sweeps a folder
+and tallies it.
 
 | Suite | Result |
 |---|---|
 | Blargg `cpu_instrs` | 11 / 11 |
 | Blargg `instr_timing` | pass |
-| Blargg `mem_timing` / `mem_timing-2` | 3 / 3, 4 / 4 |
+| Blargg `mem_timing` / `mem_timing-2` | 3 / 3, 3 / 3 |
 | Blargg `halt_bug` | pass |
-| Blargg `dmg_sound` | 9 / 12 — the three wave RAM access-timing tests fail |
-| Blargg `cgb_sound` | 7 / 12 |
-| Blargg `oam_bug` | 6 / 8 |
+| Blargg `dmg_sound` | 12 / 12 |
+| Blargg `cgb_sound` | 12 / 12 |
+| Blargg `oam_bug` | 6 / 8 — `7-timing_effect`, `8-instr_effect` |
 | Blargg `interrupt_time` | fails |
 | dmg-acid2 | pixel-exact, on both a Game Boy and a Game Boy Color |
 | cgb-acid2 | pixel-exact |
 | cgb-acid-hell | 176 of 23040 pixels off |
+| rtc3test | all three suites pixel-exact |
+| mbc3-tester | 20 tiles off, on banks past 128 of a 4 MB cartridge |
 
-Mooneye is **93 / 96** on the tests that apply to the two consoles this emulates — the
-DMG0, MGB, SGB, SGB2, CGB0 and AGB revisions, the manual-only screenshot tests and the
-boot-ROM dumper are excluded.
+Mooneye is **96 / 100** on the tests that apply to the two consoles this emulates. The
+DMG0, MGB, SGB, SGB2, CGB0 and AGB revisions are excluded, as are the manual-only
+screenshot test and the boot-ROM dumper.
 
 | Mooneye group | Result |
 |---|---|
-| `acceptance` (CPU, interrupts, HALT, EI, OAM DMA, serial) | 30 / 30 |
+| `acceptance` (CPU, interrupts, HALT, EI, OAM DMA) | 27 / 27 |
 | `acceptance/bits`, `/instr`, `/interrupts`, `/oam_dma` | 8 / 8 |
 | `acceptance/timer` | 12 / 13 — `rapid_toggle` |
 | `acceptance/ppu` | 10 / 12 — `lcdon_timing`, `lcdon_write_timing` |
+| `acceptance/serial` | 0 / 1 — `boot_sclk_align` |
 | `emulator-only` (MBC1, MBC2, MBC5) | 28 / 28 |
 | `misc` — Game Boy Color boot registers, DIV, I/O and PPU | 5 / 5 |
 
 The colourisation of monochrome cartridges is checked the same way: dmg-acid2 run on
 Game Boy Color hardware picks its palette out of the boot ROM's compatibility tables, and
 the result matches the reference screenshot exactly, all six colours.
+
+Two suites are effectively untouched, both for the same reason. `ppu.cpp` renders a whole
+scanline at once, sampling SCX, SCY, LCDC and the palettes a single time per line, so a
+game that changes any of them *during* a line cannot be represented at all. Mealybug
+Tearoom exists to test precisely that and only `m2_win_en_toggle` matches — though the
+misses are 100 to 2000 pixels out of 23040, so the renderer is otherwise close. SameSuite
+is 6 / 78, almost all of it audio tests that compare output sample by sample. Both want
+work that is a rewrite rather than a repair: a pixel FIFO for one, a sample-exact APU for
+the other.
 
 Playable and verified: Tetris, Dr. Mario, Kirby's Dream Land 1–2, Super Mario Land 1–2,
 Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yellow.
@@ -215,7 +231,11 @@ launch.
 - [x] Battery-backed saves written to `.sav`
 - [x] Game Boy Color — palettes, banking, HDMA, double speed
 - [x] Light and dark themes
+- [x] Wave RAM access timing, and the rest of the Game Boy Color sound differences
+- [x] MBC3 real-time clock, kept in the `.sav`
+- [x] Serial link port
 - [ ] Save states
+- [ ] A pixel FIFO, so mid-scanline effects render (Mealybug Tearoom)
 - [ ] The scanline the LCD comes back on (`lcdon_timing`, `lcdon_write_timing`)
 - [ ] Adjustable game speed / fast-forward
-- [ ] Wave RAM access timing (`dmg_sound` 09 / 10 / 12)
+- [ ] Frame blending, for games that fake translucency by flickering sprites

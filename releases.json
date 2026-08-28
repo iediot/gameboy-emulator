@@ -1,27 +1,27 @@
 {
   "name": "gameboy-emu",
-  "version": "1.1.0",
-  "generated": "2026-08-27T13:04:47Z",
+  "version": "1.2.0",
+  "generated": "2026-08-28T22:20:30Z",
   "artifacts": [
     {
       "platform": "macos",
-      "file": "gameboy-emu-1.1.0-macos-arm64.zip",
-      "bytes": 263011461,
-      "sha256": "793a19a052d452ab4c4b075262df71c7f71e335050b5136e17b858f7fc18a25f",
+      "file": "gameboy-emu-1.2.0-macos-arm64.zip",
+      "bytes": 263013076,
+      "sha256": "8fc57f816f61102d9640cb1b76f8fb5d62bf4c7b381d20fdeac2c597704362f7",
       "notes": "macOS 13+, Apple silicon. Unsigned, so the first launch needs right click then Open."
     },
     {
       "platform": "ios",
-      "file": "gameboy-emu-1.1.0-ios-unsigned.ipa",
-      "bytes": 263518512,
-      "sha256": "bccd83e0a422b3cb9bf5c8e4a030045839395e09b069d75d385e8b047560f2cf",
+      "file": "gameboy-emu-1.2.0-ios-unsigned.ipa",
+      "bytes": 263520004,
+      "sha256": "4cbfc3a53292d6b341137f20aa18293027d846df3c91d3ebf148a5de7d117fdc",
       "notes": "Unsigned .ipa for sideloading with AltStore or Sideloadly."
     },
     {
       "platform": "android",
-      "file": "gameboy-emu-1.1.0-android.apk",
-      "bytes": 263069909,
-      "sha256": "849893f1023aecc201fb2dcf5331b1bccde9998d169db363b0c60c14c00ba03f",
+      "file": "gameboy-emu-1.2.0-android.apk",
+      "bytes": 263074958,
+      "sha256": "d71e778fbdc04951761ff885bccf529f5dc62a0d5040e0d3b1355080fb6fafab",
       "notes": "arm64-v8a and x86_64, minSdk 21."
     }
   ]
