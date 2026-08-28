@@ -1,0 +1,35 @@
+# build trees, none of them belong in the repo
+build/
+build-release/
+build-ios/
+build-ios-rel/
+cmake-build-debug/
+
+# android build output and machine specific sdk path
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/.idea/
+
+# signing material, never commit either of these
+android/keystore.jks
+android/keystore.properties
+
+# ide and os droppings
+.idea/
+.claude/
+.DS_Store
+
+# audio captures from test runs
+*.wav
+
+# roms stay on disk but never in the repo
+roms/
+
+# packaged build artifacts, the manifest beside them is committed instead
+releases/
+
+# my own working notes
+CLAUDE.md
