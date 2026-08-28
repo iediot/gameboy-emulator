@@ -59,7 +59,6 @@ private:
     std::unique_ptr<Apu> apu;
     std::vector<std::string> rom_list;
     std::vector<SDL_Texture*> cover_list;
-    int selected_rom;
     std::string rom_folder;      // where .gb files are read from
     std::string artwork_folder;  // where cover art .png files live
     std::string cartridge_path;  // the cartridge shell the covers sit in
@@ -104,7 +103,6 @@ private:
     bool hidpi = false;
     bool render_cartridge = true;
     bool video_reset = false;
-    int tone_phase = 0;
     int win_w = 1280;
     int win_h = 720;
     int win_x = 0;

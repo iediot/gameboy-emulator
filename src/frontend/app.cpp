@@ -43,7 +43,7 @@ static int SDLCALL resize_watch(void* data, SDL_Event* e) {
 #endif
 
 // constructor
-App::App() : state(AppState::MENU), selected_rom(-1) {
+App::App() : state(AppState::MENU) {
     // sdl
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     SDL_AudioSpec want{}, have{};

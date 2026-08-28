@@ -23,7 +23,6 @@ struct Theme {
     ImU32 button;      // resting button face
     ImU32 text;        // sits on a control, pale in both themes
     ImU32 text_page;   // sits on the page, so it has to invert
-    ImU32 text_dim;
     ImU32 placeholder; // cover stand-in for a game with no artwork
     ImU32 border;      // glass hairline
     int   rim;         // peak alpha of the glass top light
@@ -42,7 +41,6 @@ namespace theme {
         IM_COL32( 61,  71,   5, 255),
         IM_COL32(0xE6, 0xED, 0xC7, 255),
         IM_COL32(0xE6, 0xED, 0xC7, 255),
-        IM_COL32(0x9A, 0xA3, 0x78, 255),
         IM_COL32( 61,  71,   5, 255),
         IM_COL32(255, 255, 255, 52),
         64, false
@@ -59,7 +57,6 @@ namespace theme {
         IM_COL32( 62,  72,  14, 255),
         IM_COL32(0xE6, 0xED, 0xC7, 255),
         IM_COL32( 40,  51,   2, 255),
-        IM_COL32( 62,  72,  30, 255),
         IM_COL32( 62,  72,  14, 255),
         IM_COL32(255, 255, 255, 46),
         52, false

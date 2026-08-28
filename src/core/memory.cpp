@@ -2,8 +2,6 @@
 // Created by edi on 4/22/26.
 //
 
-#include <cstdio>
-#include <iostream>
 #include "memory.h"
 #include "apu.h"
 

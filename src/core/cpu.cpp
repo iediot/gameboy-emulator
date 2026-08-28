@@ -3085,11 +3085,8 @@ uint8_t Cpu::step() {
                     break;
                 }
 
-            default: {
-                    std::cerr << "Unknown CB opcode 0x" << std::hex
-                    << static_cast<int>(cb_opcode) << " at PC = 0x" << PC - 2 << "\n";
-                    std::exit(1);
-                }
+            // every one of the 256 cb opcodes is a real instruction, so there is
+            // nothing for a default to catch
             }
             break;
         }

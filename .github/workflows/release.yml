@@ -39,7 +39,8 @@ jobs:
           cp build/gameboy-emu "$STAGE/"
           cp -R assets/artworks "$STAGE/assets/"
           mkdir -p "$STAGE/assets/sprites"
-          cp assets/sprites/cartridge.png assets/sprites/icon-mac-light.png \
+          cp assets/sprites/cartridge.png assets/sprites/trash.png \
+             assets/sprites/icon-mac-light.png \
              assets/sprites/icon-mac-dark.png "$STAGE/assets/sprites/"
           tar -czf "out/$STAGE.tar.gz" "$STAGE"
       - uses: actions/upload-artifact@v4
