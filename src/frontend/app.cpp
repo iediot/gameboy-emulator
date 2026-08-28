@@ -880,8 +880,13 @@ void App::render_game() {
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
     sync_theme();
-    // the field fills the letterbox around the lcd, never the picture itself
-    draw_iridescence(io.DisplaySize.x, io.DisplaySize.y, &dst);
+    // the field fills the letterbox around the lcd, never the picture itself. dst is in
+    // renderer pixels and the draw list works in points, which differ under hidpi
+    SDL_Rect keep = {(int)(dst.x / io.DisplayFramebufferScale.x),
+                     (int)(dst.y / io.DisplayFramebufferScale.y),
+                     (int)(dst.w / io.DisplayFramebufferScale.x),
+                     (int)(dst.h / io.DisplayFramebufferScale.y)};
+    draw_iridescence(io.DisplaySize.x, io.DisplaySize.y, &keep);
     draw_settings(io.DisplaySize.x, io.DisplaySize.y);
     ImGui::End();
     ImGui::PopStyleVar();
