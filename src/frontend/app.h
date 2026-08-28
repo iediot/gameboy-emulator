@@ -70,6 +70,7 @@ private:
     bool bundled = false;        // running from a .app, the system owns the icon then
     std::string settings_path;
     int battery_flush = 0;
+    int rtc_flush = 0;    // an rtc cart is never idle, so its clock is written out rarely
     std::string save_path;       // the loaded cartridge's .sav, empty if it has no battery
 
     int carousel_index = 0;

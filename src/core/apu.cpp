@@ -46,10 +46,14 @@ Apu::Apu() {
 
 uint8_t Apu::read(uint16_t address) {
     if (address >= 0xFF30) {
-        // while channel 3 runs, a dmg only lets the cpu see the byte the channel is on,
-        // and only in the moment it reads it
-        if (ch3.enabled && ch3.dac_on)
-            return ch3.access > 0 ? wave_ram[ch3.position >> 1] : 0xFF;
+        // while channel 3 runs the cpu never sees the byte it asked for, it sees the one
+        // the channel is on. a dmg only allows that in the moment of the channel's own
+        // read and answers 0xFF the rest of the time, the cgb allows it always
+        if (ch3.enabled && ch3.dac_on) {
+            if (cgb || ch3.access > 0)
+                return wave_ram[ch3.position >> 1];
+            return 0xFF;
+        }
         return wave_ram[address - 0xFF30];
     }
     if (address >= 0xFF27)
@@ -64,7 +68,7 @@ uint8_t Apu::read(uint16_t address) {
 void Apu::write(uint16_t address, uint8_t value) {
     if (address >= 0xFF30) {
         if (ch3.enabled && ch3.dac_on) {
-            if (ch3.access > 0)
+            if (cgb || ch3.access > 0)
                 wave_ram[ch3.position >> 1] = value;
             return;
         }
@@ -76,7 +80,8 @@ void Apu::write(uint16_t address, uint8_t value) {
     if (address == 0xFF26) {
         bool on = value & 0x80;
         if (!on) {
-            // the length counters are the one thing a dmg carries through a power cycle
+            // the length counters are the one thing a dmg carries through a power cycle,
+            // the cgb clears them with everything else
             uint8_t l1 = ch1.length, l2 = ch2.length, l4 = ch4.length;
             uint16_t l3 = ch3.length;
             registers.fill(0);
@@ -84,10 +89,12 @@ void Apu::write(uint16_t address, uint8_t value) {
             ch2 = Square{};
             ch3 = Wave{};
             ch4 = Noise{};
-            ch1.length = l1;
-            ch2.length = l2;
-            ch3.length = l3;
-            ch4.length = l4;
+            if (!cgb) {
+                ch1.length = l1;
+                ch2.length = l2;
+                ch3.length = l3;
+                ch4.length = l4;
+            }
         } else if (!power) {
             frame_step = 0;
             ch1.duty_pos = 0;
@@ -97,7 +104,9 @@ void Apu::write(uint16_t address, uint8_t value) {
         return;
     }
     if (!power) {
-        // and a dmg still lets them be loaded while it is off
+        // and a dmg still lets them be loaded while it is off, the cgb does not
+        if (cgb)
+            return;
         switch (address) {
             case 0xFF11: ch1.length = 64 - (value & 0x3F); break;
             case 0xFF16: ch2.length = 64 - (value & 0x3F); break;
@@ -187,8 +196,10 @@ void Apu::trigger_square(Square& c, int base, bool with_sweep) {
 }
 
 void Apu::trigger_wave() {
-    if (ch3.enabled && ch3.access > 0) {
-        uint8_t pos = ch3.position >> 1;
+    // retriggering just as the channel reaches for its next byte smears that byte over
+    // the first four, a dmg fault the colour hardware does not have
+    if (!cgb && ch3.enabled && ch3.freq_timer <= 2) {
+        uint8_t pos = ((ch3.position + 1) & 0x1F) >> 1;
         if (pos < 4) {
             wave_ram[0] = wave_ram[pos];
         } else {
@@ -198,7 +209,9 @@ void Apu::trigger_wave() {
         }
     }
     ch3.enabled = ch3.dac_on;
-    ch3.freq_timer = (2048 - (((registers[NR34] & 0x07) << 8) | registers[0x0D])) * 2;
+    // the channel does not start reading straight away, the first sample is six cycles
+    // late and every later one follows from there
+    ch3.freq_timer = (2048 - (((registers[NR34] & 0x07) << 8) | registers[0x0D])) * 2 + 6;
     ch3.position = 0;
 }
 

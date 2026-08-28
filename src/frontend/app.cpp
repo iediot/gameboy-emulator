@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include "platform.h" // first so GB_DESKTOP is defined before the guard below
@@ -575,7 +576,12 @@ void App::run() {
                 ppu->frame_ready = false;
                 if (++battery_flush >= 60) {
                     battery_flush = 0;
-                    save_battery_ram();
+                    // the clock alone is not worth rewriting the file every second, so
+                    // an otherwise clean rtc cart is flushed once every half minute
+                    if (mem->ram_dirty || ++rtc_flush >= 30) {
+                        rtc_flush = 0;
+                        save_battery_ram();
+                    }
                 }
             }
             if (!apu->samples.empty()) {
@@ -810,9 +816,28 @@ void App::refresh_palette() {
         mem->compat_palette = false;
 }
 
+namespace {
+    // the clock rides along after the ram in the layout the other emulators use: five
+    // live registers, five latched, then the wall clock time the file was written, all
+    // little endian
+    constexpr size_t kRtcBlob = 48;
+
+    uint32_t read_le32(const uint8_t* p) {
+        return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16)
+             | ((uint32_t)p[3] << 24);
+    }
+    void write_le32(std::vector<uint8_t>& out, uint32_t v) {
+        out.push_back(v & 0xFF);
+        out.push_back((v >> 8) & 0xFF);
+        out.push_back((v >> 16) & 0xFF);
+        out.push_back((v >> 24) & 0xFF);
+    }
+}
+
 void App::load_battery_ram(const std::string& name) {
     save_path.clear();
-    if (!mem->has_battery || mem->external_ram.empty())
+    // a timer cartridge is worth a save file even with no ram behind it
+    if (!mem->has_battery || (mem->external_ram.empty() && !mem->has_rtc))
         return;
     save_path = rom_folder + std::filesystem::path(name).stem().string() + ".sav";
 
@@ -823,17 +848,46 @@ void App::load_battery_ram(const std::string& name) {
                                std::istreambuf_iterator<char>()};
     size_t n = std::min(saved.size(), mem->external_ram.size());
     std::copy_n(saved.begin(), n, mem->external_ram.begin());
+
+    size_t ram_n = mem->external_ram.size();
+    if (mem->has_rtc && saved.size() >= ram_n + kRtcBlob) {
+        const uint8_t* p = saved.data() + ram_n;
+        for (int i = 0; i < 5; i++)
+            mem->rtc[i] = (uint8_t)read_le32(p + i * 4);
+        for (int i = 0; i < 5; i++)
+            mem->rtc_latched[i] = (uint8_t)read_le32(p + 20 + i * 4);
+        uint64_t stamp = (uint64_t)read_le32(p + 40)
+                       | ((uint64_t)read_le32(p + 44) << 32);
+        // the cartridge keeps running with the console switched off, so the time
+        // between saving and now has to be walked through
+        uint64_t now = (uint64_t)std::time(nullptr);
+        if (stamp && now > stamp)
+            mem->rtc_advance(now - stamp);
+    }
     mem->ram_dirty = false;
 }
 
 void App::save_battery_ram() {
-    if (save_path.empty() || !mem || !mem->ram_dirty || mem->external_ram.empty())
+    if (save_path.empty() || !mem)
+        return;
+    if (!mem->ram_dirty && !mem->has_rtc)
         return;
     std::ofstream f(save_path, std::ios::binary | std::ios::trunc);
     if (!f)
         return;
     f.write(reinterpret_cast<const char*>(mem->external_ram.data()),
             (std::streamsize)mem->external_ram.size());
+    if (mem->has_rtc) {
+        std::vector<uint8_t> blob;
+        for (int i = 0; i < 5; i++)
+            write_le32(blob, mem->rtc[i]);
+        for (int i = 0; i < 5; i++)
+            write_le32(blob, mem->rtc_latched[i]);
+        uint64_t now = (uint64_t)std::time(nullptr);
+        write_le32(blob, (uint32_t)(now & 0xFFFFFFFF));
+        write_le32(blob, (uint32_t)(now >> 32));
+        f.write(reinterpret_cast<const char*>(blob.data()), (std::streamsize)blob.size());
+    }
     mem->ram_dirty = false;
 }
 

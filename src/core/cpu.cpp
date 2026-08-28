@@ -354,6 +354,25 @@ uint8_t Cpu::set_bit(uint8_t bit_position, uint8_t value) { // helper for the 's
     return value | (1 << bit_position);
 }
 
+// tima counts the falling edges of one divider bit anded with the enable bit, so both
+// the divider advancing and a write to tac can produce one
+void Cpu::timer_edge() {
+    static constexpr uint8_t kSelectBit[4] = {9, 3, 5, 7};
+    uint8_t TAC = mem.read_direct(0xFF07);
+    bool selected_bit = (internal_div >> kSelectBit[TAC & 0x03]) & 1;
+    bool and_result = selected_bit && (TAC & 0x04);
+
+    if (last_and_result && !and_result) {
+        if (mem.read_direct(0xFF05) == 0xFF) {
+            mem.write_direct(0xFF05, 0x00);   // reads as 00 during the delay
+            tima_reload_delay = 4;
+        } else {
+            mem.write_direct(0xFF05, mem.read_direct(0xFF05) + 1);
+        }
+    }
+    last_and_result = and_result;
+}
+
 void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
     uint8_t index = 0;
     while (cycles)
@@ -369,30 +388,6 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         }
         internal_div++;
         mem.sync_div(internal_div >> 8);
-        uint8_t TAC = mem.read_direct(0xFF07);
-        bool timer_enable = TAC & 0x04;
-        uint8_t clock_select = TAC & 0x03;
-        uint8_t bit_position;
-        switch (clock_select) {
-            case 0x00: {
-                    bit_position = 9;
-                    break;
-                }
-            case 0x01: {
-                    bit_position = 3;
-                    break;
-                }
-            case 0x02: {
-                    bit_position = 5;
-                    break;
-                }
-            case 0x03: {
-                    bit_position = 7;
-                    break;
-                }
-        }
-        bool selected_bit = (internal_div >> bit_position) & 1;
-        bool and_result = selected_bit && timer_enable;
         // a write to TIMA while it is waiting to reload throws the reload away and
         // keeps whatever was written
         if (mem.tima_written) {
@@ -408,15 +403,7 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
             tima_reloaded = true;
         }
 
-        if (last_and_result && !and_result) {
-            if (mem.read_direct(0xFF05) == 0xFF) {
-                mem.write_direct(0xFF05, 0x00);   // reads as 00 during the delay
-                tima_reload_delay = 4;
-            } else {
-                mem.write_direct(0xFF05, mem.read_direct(0xFF05) + 1);
-            }
-        }
-        last_and_result = and_result;
+        timer_edge();
 
         // the apu frame sequencer runs off the same counter as the timer, one step on
         // every falling edge of bit 12, which is 4194304 / 8192 = 512 hz
@@ -425,16 +412,31 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
             apu.frame_tick();
         last_apu_bit = apu_bit;
 
+        // the link port hangs off the same divider, one bit shifted out on every falling
+        // edge, which is why a transfer's timing lines up with div rather than with the
+        // write that started it
+        bool serial_bit = (internal_div >> (mem.serial_fast() ? 3 : 8)) & 1;
+        if (mem.serial_active && last_serial_bit && !serial_bit)
+            mem.serial_shift();
+        last_serial_bit = serial_bit;
+
         // in double speed the cpu and the divider run twice as fast, the ppu, the apu
         // and dma keep their own clock, so they only advance on every second t-cycle
         if (!mem.double_speed || (speed_phase ^= 1) == 0) {
             ppu.step(1);
             apu.step(1);
             mem.step_dma();
+            // the cartridge clock has its own crystal, so it belongs on this side of the
+            // speed switch rather than on the cpu's
+            mem.rtc_tick();
         }
 
-        if (bus_kind != BUS_NONE && index == bus_at && bus_late)
+        if (bus_kind != BUS_NONE && index == bus_at && bus_late) {
             do_bus();
+            // a write that lands on tac changes the and gate's inputs right here, and
+            // the edge that makes is the one rapid toggling of the timer is all about
+            timer_edge();
+        }
 
         cycles--;
         total_cycles++;
@@ -505,6 +507,21 @@ void Cpu::write_and_tick(uint16_t address, uint8_t value) {
 
 uint8_t Cpu::step() {
     uint8_t cb_opcode = 0;
+
+    // an undefined opcode has hung the bus, nothing but a reset gets out of this
+    if (locked) {
+        tick(4);
+        return 4;
+    }
+
+    // a vram transfer holds the bus, so the cpu does nothing at all until it is done,
+    // interrupts included
+    if (mem.dma_stall) {
+        uint8_t n = mem.dma_stall > 4 ? 4 : (uint8_t)mem.dma_stall;
+        mem.dma_stall -= n;
+        tick(n);
+        return n;
+    }
 
     if (halted == true) {
         if (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F)
@@ -1044,6 +1061,8 @@ uint8_t Cpu::step() {
         }
 
     case 0x40: // LD B, B
+        // a no-op on hardware, which is why the test suites use it as a breakpoint
+        debug_break = true;
         break;
 
     case 0x41: { // LD B, C
@@ -1303,8 +1322,9 @@ uint8_t Cpu::step() {
 
     case 0x76: { // HALT
             // with ime off and an interrupt already pending the cpu never halts, it
-            // fetches the following byte without advancing past it
-            if (!IME && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F))
+            // fetches the following byte without advancing past it. an ei still in
+            // flight counts as on, so ei followed by halt takes the interrupt instead
+            if (!IME && ime_pending == 0 && (mem.read(0xFF0F) & mem.read(0xFFFF) & 0x1F))
                 halt_bug = true;
             else
                 halted = true;
@@ -3403,9 +3423,12 @@ uint8_t Cpu::step() {
         }
 
     default:
+        // the eleven opcodes the cpu has no wiring for lock it solid until a reset, so
+        // a game that jumps into one has to stop dead rather than take the process down
         std::cerr << "Unknown opcode 0x" << std::hex
         << static_cast<int>(opcode) << " at PC = 0x" << PC - 1 << "\n";
-        std::exit(1);
+        locked = true;
+        break;
     }
 
     if (ime_pending) {

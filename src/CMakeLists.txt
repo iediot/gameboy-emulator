@@ -110,3 +110,11 @@ endif()
 
 target_link_libraries(gameboy_emu PRIVATE gb::sdl gb::imgui)
 target_include_directories(gameboy_emu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# headless core-only harness for the test rom suites, built on desktop only
+if(GB_DESKTOP)
+    add_executable(gbtest ${GB_ROOT_DIR}/tools/gbtest.cpp
+            core/cpu.cpp core/memory.cpp core/ppu.cpp core/apu.cpp)
+    target_include_directories(gbtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    set_target_properties(gbtest PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()

@@ -43,6 +43,8 @@ public:
     uint8_t ime_pending = 0;
     bool halted = false;
     bool halt_bug = false;   // halt with interrupts disabled but one pending reads the next byte twice
+    bool debug_break = false;   // ld b,b executed, the test suites' software breakpoint
+    bool locked = false;        // an undefined opcode was fetched, the cpu is hung
 
     uint64_t total_cycles = 0;
 
@@ -50,8 +52,10 @@ public:
     uint16_t internal_div = 0xABCB; // post-boot 0xABCC, less one because tick advances it before use
     bool last_and_result = false; // result of '(internal_div & selected_bit) & timer_enable' from last t-cycle
     bool last_apu_bit = false;    // bit 12 of internal_div from last t-cycle, clocks the frame sequencer
+    bool last_serial_bit = false; // the divider bit the link port shifts on
     uint8_t tima_reload_delay = 0;
     void tick(uint8_t cycles);
+    void timer_edge();
 
     // the memory access an instruction is performing, carried into tick so the bus
     // transaction can land on a chosen t-cycle instead of after the whole m-cycle

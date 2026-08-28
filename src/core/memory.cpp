@@ -122,6 +122,83 @@ void Memory::write_mbc2(uint16_t address, uint8_t value) {
     }
 }
 
+// the clock counters are not plain binary: seconds and minutes are six bits wide and
+// only carry when they roll past 59, so a game that parks 62 in there watches it count
+// to 63 and wrap with no carry at all. hours are five bits, days nine plus a sticky
+// overflow flag in the top bit of the high register
+void Memory::rtc_step_second() {
+    bool carry = (rtc[0] & 0x3F) == 59;
+    rtc[0] = carry ? 0 : (uint8_t)((rtc[0] + 1) & 0x3F);
+    if (!carry)
+        return;
+
+    carry = (rtc[1] & 0x3F) == 59;
+    rtc[1] = carry ? 0 : (uint8_t)((rtc[1] + 1) & 0x3F);
+    if (!carry)
+        return;
+
+    carry = (rtc[2] & 0x1F) == 23;
+    rtc[2] = carry ? 0 : (uint8_t)((rtc[2] + 1) & 0x1F);
+    if (!carry)
+        return;
+
+    uint16_t days = (uint16_t)rtc[3] | ((uint16_t)(rtc[4] & 0x01) << 8);
+    days++;
+    rtc[3] = days & 0xFF;
+    rtc[4] = (rtc[4] & 0xFE) | ((days >> 8) & 0x01);
+    if (days > 0x1FF)
+        rtc[4] |= 0x80;   // the overflow flag stays up until the game clears it
+}
+
+void Memory::rtc_tick() {
+    if (!has_rtc || (rtc[4] & 0x40))   // bit 6 halts the crystal
+        return;
+    if (++rtc_sub < 4194304)
+        return;
+    rtc_sub = 0;
+    rtc_step_second();
+}
+
+// catching up after the console was off, done a second at a time so the carries and the
+// overflow flag land exactly as they would have while it ran
+void Memory::rtc_advance(uint64_t seconds) {
+    if (!has_rtc || (rtc[4] & 0x40))
+        return;
+    // more than the counter can hold only ever leaves the overflow flag set, so there is
+    // no point walking years of it
+    if (seconds > 0x1FF * 86400ull + 86400ull) {
+        rtc[4] |= 0x80;
+        seconds %= 0x1FF * 86400ull;
+    }
+    while (seconds--)
+        rtc_step_second();
+}
+
+uint8_t Memory::rtc_read() const {
+    switch (rtc_select) {
+        case 0x08: return rtc_latched[0] & 0x3F;
+        case 0x09: return rtc_latched[1] & 0x3F;
+        case 0x0A: return rtc_latched[2] & 0x1F;
+        case 0x0B: return rtc_latched[3];
+        case 0x0C: return rtc_latched[4] & 0xC1;
+        default:   return 0xFF;
+    }
+}
+
+void Memory::rtc_write(uint8_t value) {
+    switch (rtc_select) {
+        // writing the seconds also restarts the divider feeding them, so the game gets a
+        // full second before the value it just set moves on
+        case 0x08: rtc[0] = value & 0x3F; rtc_sub = 0; break;
+        case 0x09: rtc[1] = value & 0x3F; break;
+        case 0x0A: rtc[2] = value & 0x1F; break;
+        case 0x0B: rtc[3] = value; break;
+        case 0x0C: rtc[4] = value & 0xC1; break;
+        default: return;
+    }
+    ram_dirty = true;
+}
+
 void Memory::write_mbc3(uint16_t address, uint8_t value) {
     if (address >= 0x0000 && address <= 0x1FFF) {
         ram_enabled = ((value & 0x0F) == 0x0A);
@@ -133,9 +210,22 @@ void Memory::write_mbc3(uint16_t address, uint8_t value) {
             rom_bank = 1;
     }
     if (address >= 0x4000 && address <= 0x5FFF) {
-        if (value <= 0x03)
+        // mbc30 carts carry eight ram banks, the plain part four, and the clock sits in
+        // the same window one register at a time
+        if (value <= 0x07) {
             ram_bank = value;
-        // values 0x08-0x0C select RTC registers defer
+            rtc_select = 0;
+        } else if (value >= 0x08 && value <= 0x0C) {
+            rtc_select = value;
+        }
+    }
+
+    // a zero followed by a one freezes the live counters into the copy the game reads
+    if (address >= 0x6000 && address <= 0x7FFF) {
+        if (rtc_last_latch == 0x00 && value == 0x01)
+            for (int i = 0; i < 5; i++)
+                rtc_latched[i] = rtc[i];
+        rtc_last_latch = value;
     }
 }
 
@@ -154,6 +244,22 @@ void Memory::write_mbc5(uint16_t address, uint8_t value) {
     }
 }
 
+// the colour hardware can run the port thirty two times faster, which moves the shift
+// onto a much lower divider bit
+bool Memory::serial_fast() const {
+    return cgb_mode && (data[0xFF02] & 0x02);
+}
+
+void Memory::serial_shift() {
+    // no cable means the far end is pulled high, so the byte fills with ones
+    data[0xFF01] = (uint8_t)((data[0xFF01] << 1) | 1);
+    if (--serial_bits == 0) {
+        serial_active = false;
+        data[0xFF02] &= ~0x80;
+        data[0xFF0F] |= 0x08;
+    }
+}
+
 void Memory::sync_div(uint8_t value) {
     data[0xFF04] = value;
 }
@@ -164,7 +270,7 @@ static uint8_t io_read_mask(uint16_t address) {
     switch (address) {
         case 0xFF00: return 0xC0;   // P1, the two top bits are not wired
         case 0xFF01: return 0x00;   // SB
-        case 0xFF02: return 0x7E;   // SC, only transfer start and clock select exist
+        case 0xFF02: return 0x7E;   // SC, the colour speed bit is added in Memory::read
         case 0xFF07: return 0xF8;   // TAC
         case 0xFF0F: return 0xE0;   // IF
         case 0xFF41: return 0x80;   // STAT
@@ -211,7 +317,13 @@ uint8_t Memory::read(uint16_t address) {
 
     // addresses for ram banking
     if (address >= 0xA000 && address <= 0xBFFF) {
-        if (!ram_enabled || external_ram.empty())
+        if (!ram_enabled)
+            return 0xFF;
+        // a clock register is mapped in place of the ram bank, and a timer cartridge can
+        // carry no ram at all
+        if (has_rtc && rtc_select >= 0x08 && rtc_select <= 0x0C)
+            return rtc_read();
+        if (external_ram.empty())
             return 0xFF;
         if (mbc_type == MbcType::MBC2)
             return external_ram[(address - 0xA000) & 0x01FF] | 0xF0;
@@ -296,6 +408,10 @@ uint8_t Memory::read(uint16_t address) {
         }
     }
 
+    // the colour hardware wires up a transfer speed bit the dmg leaves floating
+    if (address == 0xFF02)
+        return data[0xFF02] | (cgb_mode ? 0x7C : 0x7E);
+
     if (address >= 0xFF00 && address <= 0xFF7F)
         return data[address] | io_read_mask(address);
 
@@ -325,7 +441,13 @@ void Memory::write(uint16_t address, uint8_t value) {
 
     // cartridge external ram only writable when enabled
     if (address >= 0xA000 && address <= 0xBFFF) {
-        if (!ram_enabled || external_ram.empty())
+        if (!ram_enabled)
+            return;
+        if (has_rtc && rtc_select >= 0x08 && rtc_select <= 0x0C) {
+            rtc_write(value);
+            return;
+        }
+        if (external_ram.empty())
             return;
         if (mbc_type == MbcType::MBC2) {
             external_ram[(address - 0xA000) & 0x01FF] = value & 0x0F;
@@ -441,6 +563,17 @@ void Memory::write(uint16_t address, uint8_t value) {
     }
 
     data[address] = value;
+
+    if (address == 0xFF02) {
+        // only a transfer clocked from this side can finish on its own, one waiting on
+        // an absent cable's clock hangs exactly as it would on hardware
+        if ((value & 0x81) == 0x81) {
+            serial_active = true;
+            serial_bits = 8;
+        } else {
+            serial_active = false;
+        }
+    }
 
     if (address == 0xFF05)
         tima_written = true;
@@ -604,6 +737,9 @@ void Memory::apply_compat_palette() {
 void Memory::hdma_block() {
     if (!hdma_running)
         return;
+    // the block costs the cpu eight m-cycles, which in double speed is twice as many of
+    // its own t-cycles for the same amount of real time
+    dma_stall += double_speed ? 64 : 32;
     for (int i = 0; i < 16; i++)
         vram[vram_bank][(hdma_dst + i) & 0x1FFF] = read(hdma_src + i);
     hdma_src += 16;
@@ -666,6 +802,14 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
         mbc_type = MbcType::MBC5;
     else
         mbc_type = MbcType::NONE;
+
+    // only the two mbc3 timer variants carry a crystal
+    has_rtc = (mbc == 0x0F || mbc == 0x10);
+
+    // the apu behaves differently on the two consoles, and that follows the hardware
+    // rather than the cartridge
+    if (apu)
+        apu->cgb = cgb_enabled;
 
     // bit 7 of the cgb flag marks a cartridge that knows about the colour hardware,
     // anything else keeps running as a dmg

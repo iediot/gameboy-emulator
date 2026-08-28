@@ -51,6 +51,8 @@ public:
     bool hdma_hblank = false;
     bool hdma_running = false;
     void hdma_block();
+    // a vram transfer stops the cpu dead while it runs, eight m-cycles per block
+    uint32_t dma_stall = 0;
     Apu* apu = nullptr;
     bool div_reset = false;
     bool tima_written = false;  // a write during the reload delay cancels it
@@ -59,6 +61,13 @@ public:
     void set_button(int button, bool pressed);
 
     std::string serial_buffer;
+
+    // the link port shifts one bit per falling edge of a divider bit, and with nothing
+    // plugged in every bit that comes back is a 1
+    bool serial_active = false;
+    uint8_t serial_bits = 0;
+    bool serial_fast() const;
+    void serial_shift();
 
     std::vector<uint8_t> rom;
 
@@ -75,6 +84,20 @@ public:
 
     uint8_t mbc = 0;
     MbcType mbc_type;
+
+    // mbc3's clock. five registers tick off the cartridge's own crystal, and the game
+    // reads a frozen copy that it refreshes with a latch write
+    bool has_rtc = false;
+    uint8_t rtc[5]{};          // seconds, minutes, hours, day low, day high
+    uint8_t rtc_latched[5]{};
+    uint8_t rtc_select = 0;    // 0x08..0x0C picks a clock register over a ram bank
+    uint8_t rtc_last_latch = 0xFF;
+    uint32_t rtc_sub = 0;      // t-cycles elapsed inside the current second
+    void rtc_tick();
+    void rtc_step_second();
+    void rtc_advance(uint64_t seconds);
+    uint8_t rtc_read() const;
+    void rtc_write(uint8_t value);
 
     bool dma_active = false;
     uint16_t dma_source = 0;

@@ -95,6 +95,9 @@ public:
     Apu();
 
     std::vector<int16_t> samples;
+    // the colour hardware changed the apu in ways games can see: wave ram stays
+    // reachable while the channel runs, and a power off wipes the length counters
+    bool cgb = false;
     uint8_t read(uint16_t address);
     void write(uint16_t address, uint8_t value);
     void step(uint8_t cycles);
