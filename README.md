@@ -35,7 +35,7 @@ settings, rebindable keys, and the whole thing compiles unchanged for iOS and An
 | Component | Status |
 |---|---|
 | **CPU** | Full Sharp LR35902 set — 256 base + 256 CB-prefixed opcodes, M-cycle accurate, with the EI 1-instruction delay and the HALT bug |
-| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, variable mode 3 length, and the DMG OAM corruption bug |
+| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, variable mode 3 length, the mode 2 object scan that settles which ten sprites the line draws, and the DMG OAM corruption bug |
 | **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning. The wave RAM access window, the length counters across a power cycle and the retrigger corruption all follow whichever console is being emulated |
 | **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection, including the reload-cycle write quirks |
 | **Interrupts** | VBlank, STAT, Timer and Joypad with correct dispatch timing and IME semantics |
@@ -54,7 +54,7 @@ settings, rebindable keys, and the whole thing compiles unchanged for iOS and An
 | **Banked WRAM** | Eight banks via SVBK |
 | **Sprite rules** | OAM-index priority, per-sprite VRAM bank, and LCDC bit 0 as master priority |
 | **HDMA / GDMA** | General-purpose and H-blank transfers via `$FF51`–`$FF55` |
-| **Double speed** | KEY1 arm plus `STOP`, with the peripherals held to their own clock |
+| **Double speed** | KEY1 arm plus `STOP`, with each peripheral kept on the clock it actually runs on — the timer, the link port and the OAM transfer follow the CPU, the PPU, the APU and the cartridge clock do not, and the APU's frame sequencer moves up a divider bit to stay at 512 Hz |
 | **Mono colourisation** | The CGB boot ROM's compatibility palettes, picked by title checksum, so monochrome games get the colours real hardware gives them |
 
 Colour is decided by the cartridge header, not the file extension — Pokémon Yellow is a
@@ -76,7 +76,7 @@ and tallies it.
 | Blargg `dmg_sound` | 12 / 12 |
 | Blargg `cgb_sound` | 12 / 12 |
 | Blargg `oam_bug` | 6 / 8 — `7-timing_effect`, `8-instr_effect` |
-| Blargg `interrupt_time` | fails |
+| Blargg `interrupt_time` | pass, at both CPU speeds |
 | dmg-acid2 | pixel-exact, on both a Game Boy and a Game Boy Color |
 | cgb-acid2 | pixel-exact |
 | cgb-acid-hell | 176 of 23040 pixels off |

@@ -406,8 +406,10 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
         timer_edge();
 
         // the apu frame sequencer runs off the same counter as the timer, one step on
-        // every falling edge of bit 12, which is 4194304 / 8192 = 512 hz
-        bool apu_bit = (internal_div >> 12) & 1;
+        // every falling edge of bit 12, which is 4194304 / 8192 = 512 hz. in double
+        // speed the divider runs twice as fast, so the tap moves up a bit to keep the
+        // sequencer at 512 hz in real time
+        bool apu_bit = (internal_div >> (mem.double_speed ? 13 : 12)) & 1;
         if (last_apu_bit && !apu_bit)
             apu.frame_tick();
         last_apu_bit = apu_bit;
@@ -420,14 +422,16 @@ void Cpu::tick(uint8_t cycles) { // advances the timer by the number of cycles
             mem.serial_shift();
         last_serial_bit = serial_bit;
 
+        // the oam transfer is driven by the cpu clock, so in double speed it moves a
+        // byte every four of these and finishes in half the time it otherwise would
+        mem.step_dma();
+
         // in double speed the cpu and the divider run twice as fast, the ppu, the apu
-        // and dma keep their own clock, so they only advance on every second t-cycle
+        // and the cartridge clock keep their own, so they only advance on every second
+        // t-cycle
         if (!mem.double_speed || (speed_phase ^= 1) == 0) {
             ppu.step(1);
             apu.step(1);
-            mem.step_dma();
-            // the cartridge clock has its own crystal, so it belongs on this side of the
-            // speed switch rather than on the cpu's
             mem.rtc_tick();
         }
 
@@ -677,10 +681,20 @@ uint8_t Cpu::step() {
 
     case 0x10: { /* STOP, on the cgb this is how an armed speed switch is taken,
                     everywhere else it stays the no-op it always was */
+            // the divider is cleared either way, which is what a game switching speed
+            // sees in the timer and in the apu's frame sequencer straight afterwards
+            internal_div = 0;
+            last_and_result = false;
+            last_apu_bit = false;
+            last_serial_bit = false;
             if (mem.cgb_mode && mem.speed_switch_armed) {
                 mem.double_speed = !mem.double_speed;
                 mem.speed_switch_armed = false;
                 speed_phase = 0;
+                // the switch itself parks the cpu for 2050 m-cycles while the clock
+                // settles, and the lcd keeps running through it
+                for (int i = 0; i < 2050; i++)
+                    tick(4);
             }
             PC++;
             break;

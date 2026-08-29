@@ -15,6 +15,7 @@ private:
     uint8_t fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc,
                            uint8_t& attr_out);
     uint16_t mode3_length_extra();
+    void scan_oam();
 public:
     // very used memory addresses
     static constexpr uint16_t IF_ADDR = 0xFF0F;
@@ -54,6 +55,19 @@ public:
     bool stat_line = false;
 
     uint16_t mode3_extra = 0;
+
+    // the ten objects the oam scan picked for this line. hardware settles on them
+    // during mode 2 and mode 3 draws that list, so a write landing after the scan
+    // cannot change what appears on the line it lands in
+    struct ScannedSprite {
+        uint8_t x;
+        uint8_t tile_index;
+        uint8_t flags;
+        uint8_t row;
+        uint8_t oam_index;
+    };
+    ScannedSprite line_sprites[10];
+    int line_sprite_count = 0;
 
     // the draw functions
     void draw_sprite();

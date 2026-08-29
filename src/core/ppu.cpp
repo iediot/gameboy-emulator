@@ -75,6 +75,31 @@ uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcd
     return color_id;
 }
 
+// hardware walks oam through the whole of mode 2 and keeps the first ten objects that
+// cover this line. everything after that, the mode 3 penalty and the drawing both, works
+// off that list rather than off oam itself
+void Ppu::scan_oam() {
+    line_sprite_count = 0;
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
+    if (!(LCDC & 0x02))
+        return;
+    uint8_t LY = mem.read_direct(LY_ADDR);
+    uint8_t height = (LCDC & 0x04) ? 16 : 8;
+
+    for (int i = 0; i < 40 && line_sprite_count < 10; i++) {
+        int y = mem.read_direct(0xFE00 + i * 4) - 16;
+        if (LY < y || LY >= y + height)
+            continue;
+        line_sprites[line_sprite_count++] = {
+            mem.read_direct(0xFE00 + i * 4 + 1),
+            mem.read_direct(0xFE00 + i * 4 + 2),
+            mem.read_direct(0xFE00 + i * 4 + 3),
+            (uint8_t)(LY - y),
+            (uint8_t)i
+        };
+    }
+}
+
 // mode 3 runs 172 dots plus the fine scroll, plus a penalty for every object on the line
 // and one for the window, all of which push back the moment hblank starts
 uint16_t Ppu::mode3_length_extra() {
@@ -85,15 +110,10 @@ uint16_t Ppu::mode3_length_extra() {
     uint16_t extra = SCX & 7;
 
     if (LCDC & 0x02) {
-        uint8_t height = (LCDC & 0x04) ? 16 : 8;
         uint8_t xs[10];
-        int count = 0;
-        for (int i = 0; i < 40 && count < 10; i++) {
-            int y = mem.read_direct(0xFE00 + i * 4) - 16;
-            if (LY < y || LY >= y + height)
-                continue;
-            xs[count++] = mem.read_direct(0xFE00 + i * 4 + 1);
-        }
+        int count = line_sprite_count;
+        for (int i = 0; i < count; i++)
+            xs[i] = line_sprites[i].x;
         // objects are handled left to right, and only the first to land in a background
         // tile pays that tile's share
         std::sort(xs, xs + count);
@@ -120,16 +140,11 @@ uint16_t Ppu::mode3_length_extra() {
 }
 
 void Ppu::draw_sprite() {
-    // sprites need to be drawn after sorting to be just the way gameboy logic draws them
-    struct sprite_vars {
-        uint8_t x;
-        uint8_t tile_index;
-        uint8_t flags;
-        uint8_t row;
-        uint8_t oam_index;
-    };
+    // the scan already settled which objects are on this line, drawing only has to put
+    // them in the right order
+    typedef ScannedSprite sprite_vars;
     sprite_vars scanline_sprites[10];
-    int sprite_count = 0;
+    int sprite_count = line_sprite_count;
 
     uint8_t LCDC = mem.read_direct(LCDC_ADDR);
     uint8_t LY = mem.read_direct(LY_ADDR);
@@ -139,27 +154,8 @@ void Ppu::draw_sprite() {
 
     uint8_t sprite_height = (LCDC & 0x04) ? 16 : 8;
 
-    int sprites_on_line = 0;
-
-    for (int i = 0; i < 40; i++) {
-        // we use int here to avoid underflow
-        int y = mem.read_direct(0xFE00 + i*4) - 16;
-        uint8_t x = mem.read_direct(0xFE00 + i*4 + 1);
-        uint8_t tile_index = mem.read_direct(0xFE00 + i*4 + 2);
-        uint8_t flags = mem.read_direct(0xFE00 + i*4 + 3);
-
-        // scanline filter
-        if (LY < y || LY >= (y + sprite_height))
-            continue;
-
-        sprites_on_line++;
-        if (sprites_on_line > 10)
-            break;
-
-        int row = LY - y;
-
-        scanline_sprites[sprite_count++] = {x, tile_index, flags, (uint8_t)row, (uint8_t)i};
-    }
+    for (int i = 0; i < sprite_count; i++)
+        scanline_sprites[i] = line_sprites[i];
 
     // the later a sprite is drawn the more it wins, on the dmg that order is by x with
     // oam index breaking ties, the cgb drops x from the comparison entirely
@@ -391,8 +387,12 @@ void Ppu::step(uint8_t cycles) {
     // evaluation reads 1 rather than 0 and every boundary sits one past its dot number
     constexpr uint16_t kDotBias = 1;
 
-    if (scanline_cycles == 80 + kDotBias)
+    // the oam scan closes as mode 3 opens, and the object list it leaves behind is what
+    // both the mode 3 length and the drawing work from
+    if (scanline_cycles == 80 + kDotBias) {
+        scan_oam();
         mode3_extra = mode3_length_extra();
+    }
 
     if (ly_counter >= 144) { // mode 1 - VBlank
         mode = 1;
