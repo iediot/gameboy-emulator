@@ -133,8 +133,8 @@ void Ppu::fetch_step_dot() {
             }
             break;
         }
-        default: {  // hand the eight pixels over, but only if there is room for them
-            if (bg_fifo_len > 8)
+        default: {  // hand the eight pixels over, but only once the queue has drained
+            if (bg_fifo_len > 0)
                 return;
             for (int i = 0; i < 8; i++) {
                 int bit = (fetch_attr & 0x20) ? i : 7 - i;
@@ -406,7 +406,9 @@ void Ppu::step(uint8_t cycles) {
     // the dot that hands over the last pixel is still a mode 3 dot, the change only
     // shows from the next one, so the mode is read from where the line stood on entry
     bool was_active = line_active;
-    if (ly_counter < 144 && line_active)
+    // a zero cycle step is the cpu telling the ppu to re-read a register it just wrote,
+    // not the passage of a dot, so the pipeline must not move for it
+    if (cycles > 0 && ly_counter < 144 && line_active)
         mode3_dot();
 
     if (ly_counter >= 144) { // mode 1 - VBlank
