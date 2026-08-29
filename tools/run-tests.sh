@@ -5,7 +5,9 @@
 # and point this at one of the folders inside, for example
 #   tools/run-tests.sh ~/gb-tests/mooneye-test-suite --bp
 # --bp trusts the ld b,b breakpoint the mooneye and same-suite roms sign off with, which
-# blargg's roms execute as ordinary code, so leave it off for those
+# blargg's roms execute as ordinary code, so leave it off for those.
+# --micro reads gbmicrotest's verdict out of hram instead, and wants --dmg with it since
+# those roms were checked against a dmg
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/build-release/gbtest"

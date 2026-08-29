@@ -165,6 +165,8 @@ int main(int argc, char** argv) {
     // blargg's roms execute ld b,b as ordinary code, so the breakpoint protocol is only
     // trusted for the suites that actually use it
     bool breakpoints = false;
+    // gbmicrotest leaves its verdict in three bytes of hram rather than saying anything
+    bool micro = false;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--press" && i + 1 < argc) {
@@ -190,6 +192,8 @@ int main(int argc, char** argv) {
             fb_path = argv[++i];
         else if (a == "--bp")
             breakpoints = true;
+        else if (a == "--micro")
+            micro = true;
         else if (a == "--seconds" && i + 1 < argc)
             seconds = atof(argv[++i]);
     }
@@ -311,6 +315,24 @@ int main(int argc, char** argv) {
     }
 
     const char* model = cgb ? "cgb" : "dmg";
+    if (micro) {
+        uint8_t flag = mem.read_direct(0xFF82);
+        uint8_t got = mem.read_direct(0xFF80);
+        uint8_t want = mem.read_direct(0xFF81);
+        if (flag == 0x01 || flag == 0xFF) {
+            char buf[64];
+            std::snprintf(buf, sizeof buf, "got %02X want %02X", got, want);
+            std::printf("%s %s [%s] %s\n", flag == 0x01 ? "PASS" : "FAIL",
+                        path.c_str(), cgb ? "cgb" : "dmg", buf);
+            return flag == 0x01 ? 0 : 1;
+        }
+        std::printf("NORESULT %s [%s] hram", path.c_str(), cgb ? "cgb" : "dmg");
+        for (uint16_t a = 0xFF80; a <= 0xFF8F; a++)
+            std::printf(" %02X", mem.read_direct(a));
+        std::printf("\n");
+        return 1;
+    }
+
     if (!v.done && stuck) {
         std::string tail;
         for (char c : mem.serial_buffer)

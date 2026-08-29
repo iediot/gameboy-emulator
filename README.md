@@ -82,6 +82,7 @@ and tallies it.
 | cgb-acid-hell | 176 of 23040 pixels off |
 | rtc3test | all three suites pixel-exact |
 | mbc3-tester | 20 tiles off, on banks past 128 of a 4 MB cartridge |
+| gbmicrotest | 356 / 513. Most of what is left is interrupt latency out by a single M-cycle |
 
 Mooneye is **96 / 100** on the tests that apply to the two consoles this emulates. The
 DMG0, MGB, SGB, SGB2, CGB0 and AGB revisions are excluded, as are the manual-only
