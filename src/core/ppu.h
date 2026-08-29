@@ -106,6 +106,10 @@ public:
     int obj_pending = -1;   // which scanned object that fetch is for
     int obj_penalty_tile = -1;  // the tile that has already paid the alignment wait
     bool obj_done[10] = {};
+    /* the window's vertical condition is not a comparison, it is a latch: the ppu
+       watches for ly to equal wy and remembers that it happened for the rest of the
+       frame. a game that moves wy after that point does not put the window back */
+    bool wy_triggered = false;
     bool line_active = false;  // mode 3 is running and has pixels left to hand over
 
     void step(uint8_t cycles);

@@ -286,18 +286,27 @@ void Ppu::mode3_dot() {
     uint8_t LCDC = mem.read_direct(LCDC_ADDR);
     uint8_t LY   = mem.read_direct(LY_ADDR);
 
+    // clearing the enable part way along a line drops the fetcher back onto the
+    // background there and then, mid tile and all
+    if (in_window && !(LCDC & 0x20))
+        in_window = false;
+
     // the window replaces the background from its column onward, and restarting the
     // fetcher on it is what costs the line its six dots
-    if (!in_window && (LCDC & 0x20) && LY >= mem.read_direct(WY_ADDR)) {
+    if (!in_window && (LCDC & 0x20) && wy_triggered) {
         int wx = (int)mem.read_direct(WX_ADDR) - 7;
         if (discard == 0 && lx >= wx && wx < 160) {
+            bool first = !window_started;
             in_window = true;
             window_started = true;
             bg_fifo_head = 0;
             bg_fifo_len = 0;
             fetch_step = 0;
             fetch_dot = 0;
-            fetch_x = 0;
+            // the window keeps its own column counter for the line, so switching the
+            // window off and back on again picks up where it left off
+            if (first)
+                fetch_x = 0;
             return;
         }
     }
@@ -336,6 +345,7 @@ void Ppu::step(uint8_t cycles) {
         mem.write_direct(LY_ADDR, 0);
         mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & 0xFC);
         window_line_counter = 0;
+        wy_triggered = false;
         line_active = false;
         // the mode sources go quiet but the retained coincidence bit still drives the
         // interrupt line, so switching back on with the same result raises no edge
@@ -375,6 +385,7 @@ void Ppu::step(uint8_t cycles) {
         if (ly_counter >= 154) {
             ly_counter = 0;
             window_line_counter = 0; // also reset the window counter
+            wy_triggered = false;
         }
         if (ly_counter == 144) {
             mem.write_direct(IF_ADDR, mem.read_direct(IF_ADDR) | 0x01);
@@ -395,6 +406,12 @@ void Ppu::step(uint8_t cycles) {
     // scanline_cycles is advanced before the mode is evaluated, so a line's first
     // evaluation reads 1 rather than 0 and every boundary sits one past its dot number
     constexpr uint16_t kDotBias = 1;
+
+    // the window's vertical latch is only armed while the ppu is scanning oam, not all
+    // line long
+    if (ly_counter < 144 && scanline_cycles < 80 + kDotBias
+        && ly == mem.read_direct(WY_ADDR))
+        wy_triggered = true;
 
     // the oam scan closes as mode 3 opens and the fetcher takes over from there. how
     // long mode 3 then runs is not a formula, it is however many dots the fetcher needs
