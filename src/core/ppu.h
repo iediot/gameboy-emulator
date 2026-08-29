@@ -11,11 +11,15 @@
 class Ppu {
 private:
     Memory& mem;
-    // helper for our draw method
-    uint8_t fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc,
-                           uint8_t& attr_out);
-    uint16_t mode3_length_extra();
     void scan_oam();
+
+    // the fetcher and the shifter, run one dot at a time through mode 3
+    void line_start();
+    void fetch_step_dot();
+    void shift_pixel();
+    void start_object_fetch(int which);
+    void push_object(int which);
+    void mode3_dot();
 public:
     // very used memory addresses
     static constexpr uint16_t IF_ADDR = 0xFF0F;
@@ -34,11 +38,6 @@ public:
     // constructor
     Ppu(Memory& memory);
 
-    // array to keep track of drawn pixels
-    uint8_t bg_color_ids[144][160];
-    // cgb tile attribute bit 7, the background wins over a sprite on this pixel
-    uint8_t bg_priority[144][160];
-
     // variables used throughout ppu
     uint16_t scanline_cycles = 0;
     uint8_t ly_counter = 0;
@@ -54,8 +53,6 @@ public:
 
     bool stat_line = false;
 
-    uint16_t mode3_extra = 0;
-
     // the ten objects the oam scan picked for this line. hardware settles on them
     // during mode 2 and mode 3 draws that list, so a write landing after the scan
     // cannot change what appears on the line it lands in
@@ -69,9 +66,47 @@ public:
     ScannedSprite line_sprites[10];
     int line_sprite_count = 0;
 
-    // the draw functions
-    void draw_sprite();
-    void draw_scanline();
+    /* mode 3 is not a loop over 160 columns, it is a fetcher walking the tile map two
+       dots at a time filling a queue, and a shifter emptying that queue one pixel per
+       dot. everything the registers say is read at the moment each pixel is fetched, so
+       a game that moves the scroll or swaps a palette part way along a line gets what
+       the hardware would have drawn rather than one value smeared across the whole row */
+    struct BgPixel {
+        uint8_t color;      // 0..3 straight out of the tile
+        uint8_t palette;    // cgb background palette number
+        uint8_t priority;   // the tile attribute's bit 7
+    };
+    struct ObjPixel {
+        uint8_t color;      // 0 means nothing was drawn here
+        uint8_t palette;    // cgb object palette, or obp1 on the dmg
+        uint8_t priority;   // the object's own bit 7, background over object
+        uint8_t index;      // oam position, which breaks ties on the cgb
+        uint8_t dmg_pal;    // 0 for obp0, 1 for obp1
+    };
+
+    BgPixel bg_fifo[16];
+    int bg_fifo_head = 0;
+    int bg_fifo_len = 0;
+    // the object queue is held aligned to the shifter, entry i is the pixel i ahead
+    ObjPixel obj_fifo[8];
+
+    int lx = 0;             // the screen column the shifter is about to hand over
+    int discard = 0;        // fine scroll pixels thrown away before the line proper
+    int fetch_step = 0;     // tile number, low byte, high byte, push
+    int fetch_dot = 0;      // each of those takes two dots
+    int fetch_x = 0;        // tile column the fetcher is on
+    bool first_fetch = true;   // the throwaway fetch every line opens with
+    bool in_window = false;
+    bool window_started = false;
+    uint8_t fetch_tile = 0;
+    uint8_t fetch_attr = 0;
+    uint8_t fetch_lo = 0;
+    uint8_t fetch_hi = 0;
+    int obj_stall = 0;      // dots an object fetch is holding the shifter for
+    int obj_pending = -1;   // which scanned object that fetch is for
+    int obj_penalty_tile = -1;  // the tile that has already paid the alignment wait
+    bool obj_done[10] = {};
+    bool line_active = false;  // mode 3 is running and has pixels left to hand over
 
     void step(uint8_t cycles);
 };

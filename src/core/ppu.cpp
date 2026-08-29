@@ -2,7 +2,6 @@
 // Created by edi on 5/10/26.
 //
 
-#include <algorithm>
 #include "ppu.h"
 
 Ppu::Ppu(Memory& memory) : mem(memory) {}
@@ -33,51 +32,9 @@ namespace {
     }
 }
 
-uint8_t Ppu::fetch_color_id(uint8_t x, uint8_t y, uint16_t map_base, uint8_t lcdc,
-                            uint8_t& attr_out) {
-    // find the tile in the 32x32 map which it covers
-    uint8_t tile_col = x / 8;
-    uint8_t tile_row = y / 8;
-
-    // the map itself always lives in bank 0, bank 1 holds the attribute for the same slot
-    uint16_t map_address = map_base + tile_row * 32 + tile_col;
-    uint8_t tile_index = mem.vram_read(0, map_address);
-    uint8_t attr = mem.cgb_mode ? mem.vram_read(1, map_address) : 0;
-    attr_out = attr;
-
-    // find the tile's pixel data in VRAM
-    uint16_t tile_address;
-
-    // check if bit 4 is 0
-    if (lcdc & 0x10)
-        tile_address = 0x8000 + tile_index * 16;
-    else
-        tile_address = 0x9000 + (int8_t)tile_index * 16;
-
-    // row of pixel data
-    uint8_t pixel_row = y % 8;
-    if (attr & 0x40)
-        pixel_row = 7 - pixel_row;
-
-    uint16_t row_address = tile_address + pixel_row * 2;
-    uint8_t bank = (attr & 0x08) ? 1 : 0;
-    uint8_t byte_low = mem.vram_read(bank, row_address);
-    uint8_t byte_high = mem.vram_read(bank, row_address + 1);
-
-    // 2-bit color id
-    uint8_t pixel_col = x % 8;
-    if (attr & 0x20)
-        pixel_col = 7 - pixel_col;
-    uint8_t low_bit = byte_low >> (7 - pixel_col) & 1;
-    uint8_t high_bit = byte_high >> (7 - pixel_col) & 1;
-    uint8_t color_id = (high_bit << 1) | low_bit;
-
-    return color_id;
-}
 
 // hardware walks oam through the whole of mode 2 and keeps the first ten objects that
-// cover this line. everything after that, the mode 3 penalty and the drawing both, works
-// off that list rather than off oam itself
+// cover this line. everything after that works off that list rather than off oam itself
 void Ppu::scan_oam() {
     line_sprite_count = 0;
     uint8_t LCDC = mem.read_direct(LCDC_ADDR);
@@ -100,225 +57,276 @@ void Ppu::scan_oam() {
     }
 }
 
-// mode 3 runs 172 dots plus the fine scroll, plus a penalty for every object on the line
-// and one for the window, all of which push back the moment hblank starts
-uint16_t Ppu::mode3_length_extra() {
+// mode 3 opens with the fetcher at the leftmost tile and the queue empty, and with the
+// fine part of the scroll marked to be thrown away once pixels start coming out
+void Ppu::line_start() {
+    bg_fifo_head = 0;
+    bg_fifo_len = 0;
+    for (int i = 0; i < 8; i++)
+        obj_fifo[i] = ObjPixel{0, 0, 0, 0, 0};
+    lx = 0;
+    discard = mem.read_direct(SCX_ADDR) & 7;
+    fetch_step = 0;
+    fetch_dot = 0;
+    fetch_x = 0;
+    first_fetch = true;
+    in_window = false;
+    window_started = false;
+    obj_stall = 0;
+    obj_pending = -1;
+    obj_penalty_tile = -1;
+    for (int i = 0; i < 10; i++)
+        obj_done[i] = false;
+    line_active = true;
+}
+
+// one dot of the background fetcher. each of the four steps takes two of them, and the
+// addresses are worked out here rather than once a line, which is the whole point
+void Ppu::fetch_step_dot() {
+    if (fetch_step != 3 && ++fetch_dot < 2)
+        return;
+    fetch_dot = 0;
+
     uint8_t LCDC = mem.read_direct(LCDC_ADDR);
+    uint8_t LY   = mem.read_direct(LY_ADDR);
     uint8_t SCX  = mem.read_direct(SCX_ADDR);
+    uint8_t SCY  = mem.read_direct(SCY_ADDR);
+
+    switch (fetch_step) {
+        case 0: {   // which tile
+            uint16_t map_base;
+            uint8_t tile_col, tile_row;
+            if (in_window) {
+                map_base = (LCDC & 0x40) ? 0x9C00 : 0x9800;
+                tile_col = fetch_x & 0x1F;
+                tile_row = (window_line_counter >> 3) & 0x1F;
+            } else {
+                map_base = (LCDC & 0x08) ? 0x9C00 : 0x9800;
+                tile_col = (uint8_t)(((SCX >> 3) + fetch_x)) & 0x1F;
+                tile_row = (uint8_t)(((uint8_t)(LY + SCY)) >> 3) & 0x1F;
+            }
+            uint16_t address = (uint16_t)(map_base + tile_row * 32 + tile_col);
+            fetch_tile = mem.vram_read(0, address);
+            fetch_attr = mem.cgb_mode ? mem.vram_read(1, address) : 0;
+            fetch_step = 1;
+            break;
+        }
+        case 1:
+        case 2: {   // the two halves of the tile row
+            uint8_t row = in_window ? (uint8_t)(window_line_counter & 7)
+                                    : (uint8_t)((uint8_t)(LY + SCY) & 7);
+            if (fetch_attr & 0x40)
+                row = 7 - row;
+            uint16_t base = (LCDC & 0x10) ? (uint16_t)(0x8000 + fetch_tile * 16)
+                                          : (uint16_t)(0x9000 + (int8_t)fetch_tile * 16);
+            uint8_t bank = (fetch_attr & 0x08) ? 1 : 0;
+            if (fetch_step == 1)
+                fetch_lo = mem.vram_read(bank, (uint16_t)(base + row * 2));
+            else
+                fetch_hi = mem.vram_read(bank, (uint16_t)(base + row * 2 + 1));
+            fetch_step++;
+            // every line opens with one fetch that is thrown away instead of pushed,
+            // which is where mode 3's twelve dot head start comes from
+            if (fetch_step == 3 && first_fetch) {
+                first_fetch = false;
+                fetch_step = 0;
+            }
+            break;
+        }
+        default: {  // hand the eight pixels over, but only if there is room for them
+            if (bg_fifo_len > 8)
+                return;
+            for (int i = 0; i < 8; i++) {
+                int bit = (fetch_attr & 0x20) ? i : 7 - i;
+                uint8_t color = (uint8_t)((((fetch_hi >> bit) & 1) << 1)
+                                        | ((fetch_lo >> bit) & 1));
+                bg_fifo[(bg_fifo_head + bg_fifo_len) & 15] =
+                    BgPixel{color, (uint8_t)(fetch_attr & 0x07),
+                            (uint8_t)((fetch_attr >> 7) & 1)};
+                bg_fifo_len++;
+            }
+            fetch_x++;
+            fetch_step = 0;
+            break;
+        }
+    }
+}
+
+// an object's eight pixels are merged into the queue rather than overwriting it. a slot
+// already holding something opaque belongs to an object that got there first, and only a
+// lower oam index takes it away, which is the rule the colour hardware follows
+void Ppu::push_object(int which) {
+    const ScannedSprite& s = line_sprites[which];
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
+    uint8_t height = (LCDC & 0x04) ? 16 : 8;
+
+    uint8_t tile = s.tile_index;
+    if (height == 16)
+        tile &= 0xFE;
+    int row = s.row;
+    if (s.flags & 0x40)
+        row = (height - 1) - row;
+
+    uint16_t address = (uint16_t)(0x8000 + tile * 16 + row * 2);
+    uint8_t bank = (mem.cgb_mode && (s.flags & 0x08)) ? 1 : 0;
+    uint8_t low  = mem.vram_read(bank, address);
+    uint8_t high = mem.vram_read(bank, (uint16_t)(address + 1));
+
+    // an object hanging off the left edge starts part way into its own row
+    int start = lx - ((int)s.x - 8);
+    if (start < 0)
+        start = 0;
+    for (int i = start; i < 8; i++) {
+        int slot = i - start;
+        if (slot > 7)
+            break;
+        int bit = (s.flags & 0x20) ? i : 7 - i;
+        uint8_t color = (uint8_t)((((high >> bit) & 1) << 1) | ((low >> bit) & 1));
+        if (color == 0)
+            continue;
+        ObjPixel& here = obj_fifo[slot];
+        bool take = here.color == 0 || (mem.cgb_mode && s.oam_index < here.index);
+        if (!take)
+            continue;
+        here = ObjPixel{color, (uint8_t)(s.flags & 0x07),
+                        (uint8_t)((s.flags >> 7) & 1), s.oam_index,
+                        (uint8_t)((s.flags & 0x10) ? 1 : 0)};
+    }
+}
+
+void Ppu::start_object_fetch(int which) {
+    obj_pending = which;
+    obj_done[which] = true;
+
+    /* the fetch itself is six dots, and on top of that the object has to wait for the
+       background fetcher to finish the tile it is in the middle of. that wait is longest
+       when the object lands right on a tile boundary and nothing when it lands near the
+       end of one, and only the first object in a given tile pays it, because the ones
+       after it find the fetcher already settled */
+    // the wait is measured from where the object sits, not from where the shifter had
+    // to clamp it to, so one hanging off the left edge still pays for its own column
+    int pixel = (int)mem.read_direct(SCX_ADDR) + (int)line_sprites[which].x - 8;
+    int tile = (pixel >> 3) & 31;
+    int align = 0;
+    if (tile != obj_penalty_tile) {
+        obj_penalty_tile = tile;
+        align = 5 - (pixel & 7);
+        if (align < 0)
+            align = 0;
+    }
+    // the dot this was decided on is itself lost to the object, so the counter holds
+    // one fewer than the total
+    obj_stall = 5 + align;
+}
+
+// one dot of the shifter: take the front of the queue, decide between it and whatever
+// object pixel sits in the same slot, and hand the result to the panel
+void Ppu::shift_pixel() {
+    if (bg_fifo_len == 0)
+        return;
+
+    BgPixel b = bg_fifo[bg_fifo_head];
+    bg_fifo_head = (bg_fifo_head + 1) & 15;
+    bg_fifo_len--;
+
+    // the fine part of the scroll is dropped at the shifter, which is what makes a
+    // scroll that is not a multiple of eight cost mode 3 those extra dots
+    if (discard > 0) {
+        discard--;
+        return;
+    }
+
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
+    uint8_t LY   = mem.read_direct(LY_ADDR);
+    ObjPixel o = obj_fifo[0];
+    for (int i = 0; i < 7; i++)
+        obj_fifo[i] = obj_fifo[i + 1];
+    obj_fifo[7] = ObjPixel{0, 0, 0, 0, 0};
+
+    // on the dmg bit 0 blanks the background outright, on the colour hardware it only
+    // strips its priority and the tiles still show
+    bool bg_on = mem.cgb_mode || (LCDC & 0x01);
+    uint8_t bg_color = bg_on ? b.color : 0;
+
+    uint32_t out;
+    if (bg_on)
+        out = mem.cgb_mode
+            ? cgb_rgb(mem.bg_palette, b.palette, bg_color)
+            : bg_shade(mem, mem.read_direct(BGP_ADDR) >> (bg_color * 2) & 0x03);
+    else
+        out = bg_shade(mem, 0);
+
+    if ((LCDC & 0x02) && o.color != 0) {
+        bool bg_wins;
+        if (mem.cgb_mode)
+            bg_wins = (LCDC & 0x01) && bg_color != 0 && (b.priority || o.priority);
+        else
+            bg_wins = o.priority && bg_color != 0;
+
+        if (!bg_wins) {
+            if (mem.cgb_mode) {
+                out = cgb_rgb(mem.obj_palette, o.palette, o.color);
+            } else {
+                uint8_t pal = mem.read_direct(o.dmg_pal ? OBP1_ADDR : OBP0_ADDR);
+                out = obj_shade(mem, o.dmg_pal, pal >> (o.color * 2) & 0x03);
+            }
+        }
+    }
+
+    if (LY < 144 && lx < 160)
+        framebuffer[LY][lx] = out;
+    lx++;
+    if (lx >= 160)
+        line_active = false;
+}
+
+// one dot of mode 3, in the order the hardware does it: the window can take the fetcher
+// over, an object can seize it, otherwise fetcher and shifter both advance
+void Ppu::mode3_dot() {
+    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
     uint8_t LY   = mem.read_direct(LY_ADDR);
 
-    uint16_t extra = SCX & 7;
-
-    if (LCDC & 0x02) {
-        uint8_t xs[10];
-        int count = line_sprite_count;
-        for (int i = 0; i < count; i++)
-            xs[i] = line_sprites[i].x;
-        // objects are handled left to right, and only the first to land in a background
-        // tile pays that tile's share
-        std::sort(xs, xs + count);
-
-        bool tile_done[33] = {};
-        for (int i = 0; i < count; i++) {
-            if (xs[i] >= 168)          // past the right edge, never fetched
-                continue;
-            int pixel = (int)SCX + (int)xs[i] - 8;
-            int tile = (pixel >> 3) & 31;
-            if (!tile_done[tile]) {
-                tile_done[tile] = true;
-                int right_of = 7 - (pixel & 7);
-                if (right_of > 2) extra += right_of - 2;
-            }
-            extra += 6;
+    // the window replaces the background from its column onward, and restarting the
+    // fetcher on it is what costs the line its six dots
+    if (!in_window && (LCDC & 0x20) && LY >= mem.read_direct(WY_ADDR)) {
+        int wx = (int)mem.read_direct(WX_ADDR) - 7;
+        if (discard == 0 && lx >= wx && wx < 160) {
+            in_window = true;
+            window_started = true;
+            bg_fifo_head = 0;
+            bg_fifo_len = 0;
+            fetch_step = 0;
+            fetch_dot = 0;
+            fetch_x = 0;
+            return;
         }
     }
 
-    if ((LCDC & 0x20) && LY >= mem.read_direct(WY_ADDR) && mem.read_direct(WX_ADDR) <= 166)
-        extra += 6;
-
-    return extra;
-}
-
-void Ppu::draw_sprite() {
-    // the scan already settled which objects are on this line, drawing only has to put
-    // them in the right order
-    typedef ScannedSprite sprite_vars;
-    sprite_vars scanline_sprites[10];
-    int sprite_count = line_sprite_count;
-
-    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
-    uint8_t LY = mem.read_direct(LY_ADDR);
-
-    if (!(LCDC & 0x02))
-        return;
-
-    uint8_t sprite_height = (LCDC & 0x04) ? 16 : 8;
-
-    for (int i = 0; i < sprite_count; i++)
-        scanline_sprites[i] = line_sprites[i];
-
-    // the later a sprite is drawn the more it wins, on the dmg that order is by x with
-    // oam index breaking ties, the cgb drops x from the comparison entirely
-    if (mem.cgb_mode) {
-        std::stable_sort(scanline_sprites, scanline_sprites + sprite_count,
-                         [](const sprite_vars& a, const sprite_vars& b) {
-            return a.oam_index > b.oam_index;
-        });
-    } else {
-        std::stable_sort(scanline_sprites, scanline_sprites + sprite_count,
-                         [](const sprite_vars& a, const sprite_vars& b) {
-            if (a.x != b.x) return a.x > b.x;
-            return a.oam_index > b.oam_index;
-        });
-    }
-
-    for (int s = 0; s < sprite_count; s++) {
-        const sprite_vars& sprite = scanline_sprites[s];
-        // unpack the fields into local vars
-        uint8_t x = sprite.x;
-        uint8_t tile_index = sprite.tile_index;
-        uint8_t flags = sprite.flags;
-        int row = sprite.row;
-
-        if (sprite_height == 16)
-            tile_index &= 0xFE;
-
-        if (flags & 0x40)
-            row = (sprite_height - 1) - row;
-
-        uint16_t row_address = 0x8000 + tile_index * 16 + row * 2;
-        uint8_t tile_bank = (mem.cgb_mode && (flags & 0x08)) ? 1 : 0;
-        uint8_t low_byte = mem.vram_read(tile_bank, row_address);
-        uint8_t high_byte = mem.vram_read(tile_bank, row_address + 1);
-
-        for (int c = 0; c < 8; c++)
-        {
-            int screen_x = (x - 8) + c;
-
-            // skip if out of bounds
-            if (screen_x < 0 || screen_x >= 160)
-                continue;
-
-            // reverse the column order if flip is set
-            int rev_c;
-            if (flags & 0x20)
-                rev_c = c;
-            else
-                rev_c = 7 - c;
-
-            // calculate the color id
-            uint8_t low_bit = (low_byte >> rev_c) & 1;
-            uint8_t high_bit = (high_byte >> rev_c) & 1;
-            uint8_t color_id = (high_bit << 1) | low_bit;
-
-            // if the color id is 0 (transparent), skip
-            if (color_id == 0)
-                continue;
-
-            // with lcdc bit 0 clear the cgb strips the background of any priority and
-            // every sprite lands on top, otherwise either the tile attribute or the
-            // sprite's own flag can put the background back in front
-            if (mem.cgb_mode) {
-                bool master_priority = LCDC & 0x01;
-                bool bg_wins = master_priority
-                            && bg_color_ids[LY][screen_x] != 0
-                            && (bg_priority[LY][screen_x] || (flags & 0x80));
-                if (bg_wins)
-                    continue;
-                framebuffer[LY][screen_x] =
-                    cgb_rgb(mem.obj_palette, flags & 0x07, color_id);
-                continue;
-            }
-
-            /* calculate the final color using the
-            respective palette, OBP0 OR OBP1 */
-            uint8_t palette;
-            if (flags & 0x10)
-                palette = mem.read_direct(OBP1_ADDR);
-            else
-                palette = mem.read_direct(OBP0_ADDR);
-
-            // calculate the final color the same way as before
-            uint8_t final_color = palette >> (color_id * 2) & 0x03;
-
-            if ((flags & 0x80) && bg_color_ids[LY][screen_x] != 0)
-                continue;
-
-            framebuffer[LY][screen_x] = obj_shade(mem, (flags & 0x10) ? 1 : 0, final_color);
+    if (obj_stall > 0) {
+        if (--obj_stall == 0 && obj_pending >= 0) {
+            push_object(obj_pending);
+            obj_pending = -1;
         }
-    }
-}
-
-void Ppu::draw_scanline() {
-    // read line registers
-    uint8_t SCY = mem.read_direct(SCY_ADDR);
-    uint8_t SCX = mem.read_direct(SCX_ADDR);
-    uint8_t LY = mem.read_direct(LY_ADDR);
-    uint8_t LCDC = mem.read_direct(LCDC_ADDR);
-
-    // on the dmg bit 0 blanks the background, on the cgb it only drops its priority so
-    // the tiles still have to be drawn
-    if (!mem.cgb_mode && !(LCDC & 0x01)) {
-        for (int x = 0; x < 160; x++) {
-            bg_color_ids[LY][x] = 0;
-            bg_priority[LY][x]  = 0;
-            framebuffer[LY][x]  = bg_shade(mem, 0);
-        }
-        draw_sprite();
         return;
     }
 
-    uint8_t bgp_value = mem.read_direct(BGP_ADDR);
-    uint16_t map_base = (LCDC & 0x08) ? 0x9C00 : 0x9800;
+    fetch_step_dot();
 
-    for (int x = 0; x <= 159; x++) {
-        uint8_t bg_y = SCY + LY;
-        uint8_t bg_x = SCX + x;
-
-        uint8_t attr;
-        uint8_t color_id = fetch_color_id(bg_x, bg_y, map_base, LCDC, attr);
-
-        // put the color id into this array to keep track of drawn tiles
-        bg_color_ids[LY][x] = color_id;
-        bg_priority[LY][x] = (attr & 0x80) ? 1 : 0;
-        framebuffer[LY][x] = mem.cgb_mode
-            ? cgb_rgb(mem.bg_palette, attr & 0x07, color_id)
-            : bg_shade(mem, bgp_value >> (color_id * 2) & 0x03);
-    }
-
-    uint8_t WY = mem.read_direct(WY_ADDR);
-    uint8_t WX = mem.read_direct(WX_ADDR);
-
-    /* check if bit 5 is set or if the window
-     layer position is out of bounds */
-    if ((LCDC & 0x20) && LY >= WY && WX <= 166) {
-        uint16_t window_tile_map;
-        if (LCDC & 0x40)
-            window_tile_map = 0x9C00;
-        else
-            window_tile_map = 0x9800;
-
-        uint8_t win_y = window_line_counter;
-        for (int x = 0; x < 160; x++) {
-            if (x < WX - 7)
+    // an object cannot be fetched until the background queue has something in it, so a
+    // fetch caught mid tile pays for the rest of that tile too. an object sitting off
+    // the left edge draws nothing but is still fetched, and still costs the line for it
+    if ((LCDC & 0x02) && bg_fifo_len > 0 && discard == 0) {
+        for (int i = 0; i < line_sprite_count; i++) {
+            if (obj_done[i])
                 continue;
-            uint8_t win_x = x - (WX - 7);
-
-            uint8_t attr;
-            uint8_t color_id = fetch_color_id(win_x, win_y, window_tile_map, LCDC, attr);
-
-            // put the color id into this array to keep track of drawn tiles
-            bg_color_ids[LY][x] = color_id;
-            bg_priority[LY][x] = (attr & 0x80) ? 1 : 0;
-            framebuffer[LY][x] = mem.cgb_mode
-                ? cgb_rgb(mem.bg_palette, attr & 0x07, color_id)
-                : bg_shade(mem, bgp_value >> (color_id * 2) & 0x03);
+            if ((int)line_sprites[i].x - 8 <= lx && line_sprites[i].x < 168) {
+                start_object_fetch(i);
+                return;
+            }
         }
-
-        window_line_counter++;
     }
 
-    draw_sprite();
+    shift_pixel();
 }
 
 void Ppu::step(uint8_t cycles) {
@@ -328,6 +336,7 @@ void Ppu::step(uint8_t cycles) {
         mem.write_direct(LY_ADDR, 0);
         mem.write_direct(STAT_ADDR, mem.read_direct(STAT_ADDR) & 0xFC);
         window_line_counter = 0;
+        line_active = false;
         // the mode sources go quiet but the retained coincidence bit still drives the
         // interrupt line, so switching back on with the same result raises no edge
         uint8_t off_stat = mem.read_direct(STAT_ADDR);
@@ -387,18 +396,24 @@ void Ppu::step(uint8_t cycles) {
     // evaluation reads 1 rather than 0 and every boundary sits one past its dot number
     constexpr uint16_t kDotBias = 1;
 
-    // the oam scan closes as mode 3 opens, and the object list it leaves behind is what
-    // both the mode 3 length and the drawing work from
-    if (scanline_cycles == 80 + kDotBias) {
+    // the oam scan closes as mode 3 opens and the fetcher takes over from there. how
+    // long mode 3 then runs is not a formula, it is however many dots the fetcher needs
+    if (ly_counter < 144 && scanline_cycles == 80 + kDotBias) {
         scan_oam();
-        mode3_extra = mode3_length_extra();
+        line_start();
     }
+
+    // the dot that hands over the last pixel is still a mode 3 dot, the change only
+    // shows from the next one, so the mode is read from where the line stood on entry
+    bool was_active = line_active;
+    if (ly_counter < 144 && line_active)
+        mode3_dot();
 
     if (ly_counter >= 144) { // mode 1 - VBlank
         mode = 1;
     } else if (scanline_cycles < 80 + kDotBias) { // mode 2 - OAM scan
         mode = 2;
-    } else if (scanline_cycles < 252 + mode3_extra + kDotBias) { // mode 3 - Drawing
+    } else if (was_active) { // mode 3 - Drawing
         mode = 3;
     } else { // mode 0 - HBlank
         mode = 0;
@@ -420,9 +435,10 @@ void Ppu::step(uint8_t cycles) {
                    || (mem.cgb_enabled && ly_counter == 143
                        && scanline_cycles >= 456 - 8 + kDotBias);
 
-    // the hblank interrupt line goes up one m-cycle before stat starts reporting mode 0
-    bool hblank_int = ly_counter < 144
-                   && scanline_cycles >= 251 + mode3_extra + kDotBias;
+    // the hblank source goes up as the fetcher finishes, one dot before stat starts
+    // reporting mode 0
+    bool hblank_int = ly_counter < 144 && !line_active
+                   && scanline_cycles >= 80 + kDotBias;
 
     bool line = (hblank_int && (STAT & 0x08))
              || (mode == 1 && (STAT & 0x10))
@@ -436,7 +452,9 @@ void Ppu::step(uint8_t cycles) {
     mem.write_direct(STAT_ADDR, (mem.read_direct(STAT_ADDR) & 0xFC) | mode);
 
     if (mode == 0 && prev_mode != 0 && ly_counter < 144) {
-        draw_scanline();
+        // the window only advances its own row counter on the lines it actually drew on
+        if (window_started)
+            window_line_counter++;
         // an hblank transfer moves one 16 byte chunk per line, which is how games get
         // tile data in without a visible tear
         if (mem.hdma_running && mem.hdma_hblank)

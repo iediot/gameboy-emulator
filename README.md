@@ -35,7 +35,7 @@ settings, rebindable keys, and the whole thing compiles unchanged for iOS and An
 | Component | Status |
 |---|---|
 | **CPU** | Full Sharp LR35902 set — 256 base + 256 CB-prefixed opcodes, M-cycle accurate, with the EI 1-instruction delay and the HALT bug |
-| **PPU** | Background, window and sprites; full LCDC handling, sprite priority and flipping, palette mapping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, variable mode 3 length, the mode 2 object scan that settles which ten sprites the line draws, and the DMG OAM corruption bug |
+| **PPU** | A pixel FIFO, not a scanline renderer: a fetcher walks the tile map two dots at a time into a queue and a shifter empties it one pixel per dot, so scroll, palette and LCDC changes land mid-line where the hardware would put them. Mode 3's length is emergent from that rather than a formula. Plus the mode 2 object scan, sprite priority and flipping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, and the DMG OAM corruption bug |
 | **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning. The wave RAM access window, the length counters across a power cycle and the retrigger corruption all follow whichever console is being emulated |
 | **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection, including the reload-cycle write quirks |
 | **Interrupts** | VBlank, STAT, Timer and Joypad with correct dispatch timing and IME semantics |
@@ -101,14 +101,16 @@ The colourisation of monochrome cartridges is checked the same way: dmg-acid2 ru
 Game Boy Color hardware picks its palette out of the boot ROM's compatibility tables, and
 the result matches the reference screenshot exactly, all six colours.
 
-Two suites are effectively untouched, both for the same reason. `ppu.cpp` renders a whole
-scanline at once, sampling SCX, SCY, LCDC and the palettes a single time per line, so a
-game that changes any of them *during* a line cannot be represented at all. Mealybug
-Tearoom exists to test precisely that and only `m2_win_en_toggle` matches — though the
-misses are 100 to 2000 pixels out of 23040, so the renderer is otherwise close. SameSuite
-is 6 / 78, almost all of it audio tests that compare output sample by sample. Both want
-work that is a rewrite rather than a repair: a pixel FIFO for one, a sample-exact APU for
-the other.
+Mealybug Tearoom is the suite that pins down what happens when a game changes a register
+part way along a line, and it is where the remaining PPU work is. The renderer can now
+represent those changes at all — the fetcher reads every register at the dot it uses it —
+and the misses shrank a great deal for it, several tests by more than an order of
+magnitude, one down to ten pixels out of 23040. But only `m2_win_en_toggle` matches
+exactly. Landing the rest is dot-level calibration of when each register is sampled, one
+test at a time, rather than anything structural.
+
+SameSuite is 6 / 78, almost all of it audio tests that compare output sample by sample.
+That one does still want a rewrite: an APU accurate to the individual sample.
 
 Playable and verified: Tetris, Dr. Mario, Kirby's Dream Land 1–2, Super Mario Land 1–2,
 Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yellow.
@@ -234,8 +236,9 @@ launch.
 - [x] Wave RAM access timing, and the rest of the Game Boy Color sound differences
 - [x] MBC3 real-time clock, kept in the `.sav`
 - [x] Serial link port
+- [x] A pixel FIFO, so mid-scanline effects render at all
 - [ ] Save states
-- [ ] A pixel FIFO, so mid-scanline effects render (Mealybug Tearoom)
+- [ ] Dot-level calibration of the FIFO against Mealybug Tearoom
 - [ ] The scanline the LCD comes back on (`lcdon_timing`, `lcdon_write_timing`)
 - [ ] Adjustable game speed / fast-forward
 - [ ] Frame blending, for games that fake translucency by flickering sprites
