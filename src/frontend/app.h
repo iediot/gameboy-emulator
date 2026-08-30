@@ -70,11 +70,16 @@ private:
     std::string settings_path;
     /* games fake translucency by showing a sprite on every other frame and letting the
        panel's slow pixels average the two. a modern display switches instantly and shows
-       the strobe instead, so the averaging is done here */
+       the strobe instead, so the averaging is done here.
+       averaging every pixel would put a ghost on everything that moves, so only the ones
+       actually flickering are touched: a pixel that matches the frame before last and
+       differs from the one in between is being strobed, whereas something merely moving
+       almost never lands back on its own value from two frames ago */
     bool frame_blend = false;
-    uint32_t frame_prev[144][160] = {};
+    uint32_t frame_prev[144][160] = {};    // the frame before this one
+    uint32_t frame_prev2[144][160] = {};   // and the one before that
     uint32_t frame_out[144][160] = {};
-    bool have_prev_frame = false;
+    int frame_history = 0;                 // frames seen since the history was reset
     void blend_frame();
     const uint32_t* present_frame() const;
 

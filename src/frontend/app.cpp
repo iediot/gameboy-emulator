@@ -802,8 +802,8 @@ void App::load_rom(const std::string& name) {
     cpu->apply_boot_state();
 
     load_battery_ram(name);
-    // nothing of the last game should bleed into the first frame of this one
-    have_prev_frame = false;
+    // nothing of the last game should bleed into the first frames of this one
+    frame_history = 0;
     state = AppState::PLAYING;
 }
 
@@ -897,30 +897,38 @@ void App::save_battery_ram() {
     mem->ram_dirty = false;
 }
 
-// two frames averaged together, which is what the original panel's response did on its
-// own. it is a plain mean of the last two rather than a decay, so a sprite alternating
-// every frame lands exactly half way and stops flickering outright
+// the deflicker pass. only pixels that are actually being strobed get averaged, so a
+// sprite drawn every other frame settles to its half tone while everything that is
+// simply moving stays as sharp as it was
 void App::blend_frame() {
     if (!frame_blend) {
-        have_prev_frame = false;
+        frame_history = 0;
         return;
     }
     const uint32_t* cur = &ppu->framebuffer[0][0];
-    uint32_t* prev = &frame_prev[0][0];
+    uint32_t* p1 = &frame_prev[0][0];
+    uint32_t* p2 = &frame_prev2[0][0];
     uint32_t* out = &frame_out[0][0];
+
     for (int i = 0; i < 144 * 160; i++) {
         uint32_t c = cur[i];
-        uint32_t p = have_prev_frame ? prev[i] : c;
-        // the two low bits of each channel are dropped by the shift, which is invisible
-        // and keeps this to one add per pixel
-        out[i] = 0xFF000000u | ((((c ^ p) & 0xFEFEFEu) >> 1) + (c & p & 0xFFFFFFu));
-        prev[i] = c;
+        if (frame_history >= 2 && c == p2[i] && c != p1[i]) {
+            uint32_t o = p1[i];
+            // the two low bits of each channel go with the shift, which is invisible,
+            // and keeps this to one add per pixel
+            out[i] = 0xFF000000u | ((((c ^ o) & 0xFEFEFEu) >> 1) + (c & o & 0xFFFFFFu));
+        } else {
+            out[i] = c;
+        }
+        p2[i] = p1[i];
+        p1[i] = c;
     }
-    have_prev_frame = true;
+    if (frame_history < 2)
+        frame_history++;
 }
 
 const uint32_t* App::present_frame() const {
-    return frame_blend && have_prev_frame ? &frame_out[0][0] : &ppu->framebuffer[0][0];
+    return frame_blend && frame_history >= 2 ? &frame_out[0][0] : &ppu->framebuffer[0][0];
 }
 
 // the renderer of the games inside the actual emulator
@@ -1671,9 +1679,9 @@ void App::draw_settings(float w, float h) {
         case TAB_GAME: {
             // games that flicker a sprite every other frame to fake a see through one
             // rely on the panel being slow, so the two frames are averaged for them
-            if (toggle_row("motion blur", "##blend", frame_blend)) {
+            if (toggle_row("deflicker", "##blend", frame_blend)) {
                 frame_blend = !frame_blend;
-                have_prev_frame = false;
+                frame_history = 0;
                 save_settings();
             }
 
