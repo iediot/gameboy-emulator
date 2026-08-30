@@ -280,7 +280,7 @@ namespace {
 
 // draws the running game, the lcd sits up top with the joypad drawn beneath it
 void App::render_game_mobile() {
-    SDL_UpdateTexture(texture, nullptr, ppu->framebuffer, 160 * 4);
+    SDL_UpdateTexture(texture, nullptr, present_frame(), 160 * 4);
 
     // imgui's renderer backend leaves a hidpi scale/viewport/clip on the renderer, fully clear it
     // before raw drawing, scale is set last so nothing undoes it

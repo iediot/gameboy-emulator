@@ -42,6 +42,11 @@ public:
     uint16_t scanline_cycles = 0;
     uint8_t ly_counter = 0;
     bool lcd_was_on = true;
+    // a real panel does not go white the instant the lcd is switched off, its pixels
+    // fade over tens of milliseconds. games flick the lcd off for a moment to get at
+    // vram, and blanking on the spot turns that into a full frame of white
+    uint32_t lcd_off_dots = 0;
+    bool lcd_blanked = false;
     bool lcd_first_line = false;
     // finished argb pixels, the dmg shades are baked in here so both the colour and the
     // monochrome path hand the frontend the same thing

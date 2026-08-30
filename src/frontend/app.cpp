@@ -439,6 +439,8 @@ void App::load_settings() {
             int v; if (f >> v && v >= 0 && v <= 5) fps_index = v;
         } else if (key == "vsync") {
             int v; if (f >> v) vsync = (v != 0);
+        } else if (key == "blend") {
+            int v; if (f >> v) frame_blend = (v != 0);
         } else if (key == "hidpi") {
             int v; if (f >> v) hidpi = (v != 0);
         } else if (key == "cartridge") {
@@ -504,6 +506,7 @@ void App::save_settings() {
     f << "vsync " << (vsync ? 1 : 0) << "\n";
     f << "hidpi " << (hidpi ? 1 : 0) << "\n";
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
+    f << "blend " << (frame_blend ? 1 : 0) << "\n";
     f << "volume " << volume << "\n";
     f << "cgb " << (cgb_enabled ? 1 : 0) << "\n";
     f << "theme " << theme_mode << "\n";
@@ -574,6 +577,7 @@ void App::run() {
                     cpu->step();
                 }
                 ppu->frame_ready = false;
+                blend_frame();
                 if (++battery_flush >= 60) {
                     battery_flush = 0;
                     // the clock alone is not worth rewriting the file every second, so
@@ -798,6 +802,8 @@ void App::load_rom(const std::string& name) {
     cpu->apply_boot_state();
 
     load_battery_ram(name);
+    // nothing of the last game should bleed into the first frame of this one
+    have_prev_frame = false;
     state = AppState::PLAYING;
 }
 
@@ -891,13 +897,39 @@ void App::save_battery_ram() {
     mem->ram_dirty = false;
 }
 
+// two frames averaged together, which is what the original panel's response did on its
+// own. it is a plain mean of the last two rather than a decay, so a sprite alternating
+// every frame lands exactly half way and stops flickering outright
+void App::blend_frame() {
+    if (!frame_blend) {
+        have_prev_frame = false;
+        return;
+    }
+    const uint32_t* cur = &ppu->framebuffer[0][0];
+    uint32_t* prev = &frame_prev[0][0];
+    uint32_t* out = &frame_out[0][0];
+    for (int i = 0; i < 144 * 160; i++) {
+        uint32_t c = cur[i];
+        uint32_t p = have_prev_frame ? prev[i] : c;
+        // the two low bits of each channel are dropped by the shift, which is invisible
+        // and keeps this to one add per pixel
+        out[i] = 0xFF000000u | ((((c ^ p) & 0xFEFEFEu) >> 1) + (c & p & 0xFFFFFFu));
+        prev[i] = c;
+    }
+    have_prev_frame = true;
+}
+
+const uint32_t* App::present_frame() const {
+    return frame_blend && have_prev_frame ? &frame_out[0][0] : &ppu->framebuffer[0][0];
+}
+
 // the renderer of the games inside the actual emulator
 void App::render_game() {
 #if GB_MOBILE
     render_game_mobile(); // letterboxed layout lives in ios_ui.cpp
     return;
 #endif
-    SDL_UpdateTexture(texture, nullptr, ppu->framebuffer, 160 * 4);
+    SDL_UpdateTexture(texture, nullptr, present_frame(), 160 * 4);
 
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     SDL_RenderSetViewport(renderer, nullptr);
@@ -1291,14 +1323,14 @@ bool App::back_button(float cx, float cy, float r) {
 }
 
 namespace {
-    enum SettingsTab { TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_SYSTEM, TAB_CONTROLS, TAB_KEYBINDS };
+    enum SettingsTab { TAB_DISPLAY, TAB_MENU, TAB_GAME, TAB_AUDIO, TAB_CONTROLS, TAB_KEYBINDS };
 #if GB_MOBILE
     // no display tab on mobile, screen fit, vsync and hidpi are all desktop only
-    constexpr SettingsTab kSettingsTabs[] = {TAB_MENU, TAB_AUDIO, TAB_SYSTEM, TAB_CONTROLS};
-    const char* const kSettingsNames[] = {"menu", "audio", "system", "controls"};
+    constexpr SettingsTab kSettingsTabs[] = {TAB_MENU, TAB_GAME, TAB_AUDIO, TAB_CONTROLS};
+    const char* const kSettingsNames[] = {"menu", "game", "audio", "controls"};
 #else
-    constexpr SettingsTab kSettingsTabs[] = {TAB_DISPLAY, TAB_MENU, TAB_AUDIO, TAB_SYSTEM, TAB_KEYBINDS};
-    const char* const kSettingsNames[] = {"display", "menu", "audio", "system", "keybinds"};
+    constexpr SettingsTab kSettingsTabs[] = {TAB_DISPLAY, TAB_MENU, TAB_GAME, TAB_AUDIO, TAB_KEYBINDS};
+    const char* const kSettingsNames[] = {"display", "menu", "game", "audio", "keybinds"};
 #endif
     constexpr int kSettingsTabCount = (int)(sizeof(kSettingsTabs) / sizeof(kSettingsTabs[0]));
 }
@@ -1586,6 +1618,14 @@ void App::draw_settings(float w, float h) {
         }
 
         case TAB_MENU: {
+            static const char* kThemeNames[3] = {"auto", "light", "dark"};
+            int tm = combo_row("theme", "##theme", kThemeNames, 3, theme_mode);
+            if (tm != theme_mode) {
+                theme_mode = tm;
+                sync_theme();
+                save_settings();
+            }
+
             int fps = combo_row("menu frame cap", "##fps", kFpsNames, 6, fps_index);
             if (fps != fps_index) {
                 fps_index = fps;
@@ -1628,14 +1668,15 @@ void App::draw_settings(float w, float h) {
             break;
         }
 
-        case TAB_SYSTEM: {
-            static const char* kThemeNames[3] = {"auto", "light", "dark"};
-            int tm = combo_row("theme", "##theme", kThemeNames, 3, theme_mode);
-            if (tm != theme_mode) {
-                theme_mode = tm;
-                sync_theme();
+        case TAB_GAME: {
+            // games that flicker a sprite every other frame to fake a see through one
+            // rely on the panel being slow, so the two frames are averaged for them
+            if (toggle_row("motion blur", "##blend", frame_blend)) {
+                frame_blend = !frame_blend;
+                have_prev_frame = false;
                 save_settings();
             }
+
             if (toggle_row("game boy color", "##cgb", cgb_enabled)) {
                 cgb_enabled = !cgb_enabled;
                 refresh_palette();

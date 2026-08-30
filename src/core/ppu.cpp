@@ -355,8 +355,14 @@ void Ppu::step(uint8_t cycles) {
         // the panel goes blank with the lcd, holding the last frame instead shows
         // whatever vram happened to contain while a game uploads with it switched off
         if (lcd_was_on) {
-            // a colourised game blanks to its own lightest colour, not to white, or every
-            // lcd toggle flashes and games switch it off constantly to upload tiles
+            lcd_off_dots = 0;
+            lcd_blanked = false;
+        }
+        lcd_off_dots += cycles;
+        // only once it has been off long enough for the panel to actually have faded,
+        // and a colourised game fades to its own lightest colour rather than to white
+        if (!lcd_blanked && lcd_off_dots > 70224 * 2) {
+            lcd_blanked = true;
             uint32_t blank = mem.cgb_mode ? 0xFFFFFFFF : bg_shade(mem, 0);
             for (int y = 0; y < 144; y++)
                 for (int x = 0; x < 160; x++)

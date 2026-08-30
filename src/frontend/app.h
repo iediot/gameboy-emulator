@@ -68,6 +68,16 @@ private:
     std::string icon_dark_path;  // window icon for a dark system theme
     bool bundled = false;        // running from a .app, the system owns the icon then
     std::string settings_path;
+    /* games fake translucency by showing a sprite on every other frame and letting the
+       panel's slow pixels average the two. a modern display switches instantly and shows
+       the strobe instead, so the averaging is done here */
+    bool frame_blend = false;
+    uint32_t frame_prev[144][160] = {};
+    uint32_t frame_out[144][160] = {};
+    bool have_prev_frame = false;
+    void blend_frame();
+    const uint32_t* present_frame() const;
+
     int battery_flush = 0;
     int rtc_flush = 0;    // an rtc cart is never idle, so its clock is written out rarely
     std::string save_path;       // the loaded cartridge's .sav, empty if it has no battery

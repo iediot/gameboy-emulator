@@ -122,7 +122,8 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 - **Cartridge carousel** — each game's box art is composited into a Game Boy cartridge shell, with real blurred drop shadows and momentum scrolling.
 - **Light and dark themes** — both palettes come off the app icons, which are exact inverses of one another. Follows the system appearance by default, with an auto / light / dark override.
 - **Iridescent backdrop** — the colour shelf, the settings sheet over it and any cartridge running in colour carry a slow drifting field of soft blobs, composited so that where two cross the colour is a third one neither owns.
-- **Settings** — display, menu, audio, system and keybind tabs: screen fit, menu frame cap, VSync, HiDPI, cartridge rendering, master volume, theme, Game Boy Color on/off and mono colourisation.
+- **Settings** — display, menu, game, audio and keybind tabs: screen fit, menu frame cap, VSync, HiDPI, cartridge rendering, master volume, theme, Game Boy Color on/off and mono colourisation.
+- **Motion blur** — a lot of games fake a translucent sprite by drawing it on every other frame and letting the original screen's slow pixels average the two. A modern display switches instantly and shows the strobe instead, so this averages the last two frames and the effect comes back. Off by default, in Settings → Game.
 - **Rebindable keys** — every button remappable from the UI.
 - **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
@@ -242,4 +243,4 @@ launch.
 - [ ] Dot-level calibration of the FIFO against Mealybug Tearoom
 - [ ] The scanline the LCD comes back on (`lcdon_timing`, `lcdon_write_timing`)
 - [ ] Adjustable game speed / fast-forward
-- [ ] Frame blending, for games that fake translucency by flickering sprites
+- [x] Frame blending, for games that fake translucency by flickering sprites
