@@ -35,7 +35,7 @@ settings, rebindable keys, and the whole thing compiles unchanged for iOS and An
 | Component | Status |
 |---|---|
 | **CPU** | Full Sharp LR35902 set — 256 base + 256 CB-prefixed opcodes, M-cycle accurate, with the EI 1-instruction delay and the HALT bug |
-| **PPU** | A pixel FIFO, not a scanline renderer: a fetcher walks the tile map two dots at a time into a queue and a shifter empties it one pixel per dot, so scroll, palette and LCDC changes land mid-line where the hardware would put them. The window is latched the way the hardware latches it — LY reaching WY during the OAM scan arms it for the rest of the frame — and clearing its enable bit part way along a line drops the fetcher back onto the background there and then. Mode 3's length is emergent from that rather than a formula. Plus the mode 2 object scan, sprite priority and flipping, LY=LYC coincidence, STAT mode interrupts, the line-153 LY quirk, and the DMG OAM corruption bug |
+| **PPU** | A pixel FIFO, not a scanline renderer: a fetcher walks the tile map two dots at a time into a queue and a shifter empties it one pixel per dot, so scroll, palette and LCDC changes land mid-line where the hardware would put them. The window is latched the way the hardware latches it — LY reaching WY during the OAM scan arms it for the rest of the frame — and clearing its enable bit part way along a line drops the fetcher back onto the background there and then. Mode 3's length is emergent from that rather than a formula. Plus the mode 2 object scan, sprite priority and flipping, LY=LYC coincidence, STAT mode interrupts, the DMG STAT write glitch, the line-153 LY quirk, and the DMG OAM corruption bug |
 | **APU** | All four channels — two squares with sweep, wave and noise — clocked off the DIV frame sequencer, with length counters, envelopes, the DMG high-pass and stereo panning. The wave RAM access window, the length counters across a power cycle and the retrigger corruption all follow whichever console is being emulated |
 | **Timer** | DIV / TIMA / TMA / TAC driven off the internal divider with proper falling-edge detection, including the reload-cycle write quirks |
 | **Interrupts** | VBlank, STAT, Timer and Joypad with correct dispatch timing and IME semantics |
@@ -82,7 +82,7 @@ and tallies it.
 | cgb-acid-hell | 176 of 23040 pixels off |
 | rtc3test | all three suites pixel-exact |
 | mbc3-tester | 20 tiles off, on banks past 128 of a 4 MB cartridge |
-| gbmicrotest | 351 / 513. What is left is mostly interrupt latency out by a single M-cycle, plus the state the boot ROM hands the PPU over in |
+| gbmicrotest | 361 / 513. What is left is mostly interrupt latency out by a single M-cycle, plus the state the boot ROM hands the PPU over in |
 
 Mooneye is **96 / 100** on the tests that apply to the two consoles this emulates. The
 DMG0, MGB, SGB, SGB2, CGB0 and AGB revisions are excluded, as are the manual-only
@@ -123,7 +123,7 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 - **Light and dark themes** — both palettes come off the app icons, which are exact inverses of one another. Follows the system appearance by default, with an auto / light / dark override.
 - **Iridescent backdrop** — the colour shelf, the settings sheet over it and any cartridge running in colour carry a slow drifting field of soft blobs, composited so that where two cross the colour is a third one neither owns.
 - **Settings** — display, menu, game, audio and keybind tabs: screen fit, menu frame cap, VSync, HiDPI, cartridge rendering, master volume, theme, Game Boy Color on/off and mono colourisation.
-- **Deflicker** — a lot of games fake a translucent sprite by drawing it on every other frame and letting the original screen's slow pixels average the two. A modern display switches instantly and shows the strobe instead. This averages the two frames back together, but only for the pixels actually being strobed — a pixel that matches the frame before last and differs from the one in between. Anything merely moving almost never lands back on its own value from two frames ago, so it is left alone and the picture stays sharp. Off by default, in Settings → Game.
+- **Motion blur** — a lot of games fake a translucent sprite by drawing it on every other frame and letting the original screen's slow pixels average the two. A modern display switches instantly and shows the strobe instead. This averages the two frames back together, but only around the pixels actually being strobed — a pixel that matches the frame before last and differs from the one in between. That region is grown a few pixels outwards and held for a few frames so it travels with a sprite that flickers while it moves. Anything merely moving never enters it, so the rest of the picture stays sharp; in practice a few percent of the screen is touched. Off by default, in Settings → Game.
 - **Rebindable keys** — every button remappable from the UI.
 - **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.

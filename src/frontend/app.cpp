@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iostream>
@@ -576,8 +577,21 @@ void App::run() {
                        cpu->total_cycles - frame_start < (mem->double_speed ? 140448u : 70224u)) {
                     cpu->step();
                 }
+                /* a frame that ended because the cycle cap ran out rather than because
+                   the ppu finished it is half drawn, and putting that on screen is what
+                   a tear is. with the lcd off nothing is being drawn at all, so whatever
+                   is in there is settled and safe to take */
+                bool complete = ppu->frame_ready;
                 ppu->frame_ready = false;
-                blend_frame();
+                /* switching the lcd off part way through a frame leaves that frame half
+                   drawn, and the leftovers would sit on top of whatever comes next. the
+                   buffer is only settled again once the ppu has faded it out, so until
+                   then the last finished frame is what stays on screen */
+                if (complete || ppu->lcd_blanked) {
+                    std::memcpy(frame_done, ppu->framebuffer, sizeof frame_done);
+                    have_frame_done = true;
+                    blend_frame();
+                }
                 if (++battery_flush >= 60) {
                     battery_flush = 0;
                     // the clock alone is not worth rewriting the file every second, so
@@ -804,6 +818,7 @@ void App::load_rom(const std::string& name) {
     load_battery_ram(name);
     // nothing of the last game should bleed into the first frames of this one
     frame_history = 0;
+    have_frame_done = false;
     state = AppState::PLAYING;
 }
 
@@ -897,38 +912,87 @@ void App::save_battery_ram() {
     mem->ram_dirty = false;
 }
 
-// the deflicker pass. only pixels that are actually being strobed get averaged, so a
-// sprite drawn every other frame settles to its half tone while everything that is
-// simply moving stays as sharp as it was
+// the motion blur pass. a pixel that matches the frame before last and differs from the one
+// in between is being strobed. finding those alone is not enough though: a sprite that
+// flickers while it moves only passes that test in its middle, and its edges would be
+// left flickering in a new way. so the region is grown outwards by a few pixels and held
+// for a few frames, which lets it travel with the sprite while everything else on screen
+// stays untouched
 void App::blend_frame() {
     if (!frame_blend) {
         frame_history = 0;
+        for (int y = 0; y < 144; y++)
+            for (int x = 0; x < 160; x++)
+                flicker_mask[y][x] = 0;
         return;
     }
-    const uint32_t* cur = &ppu->framebuffer[0][0];
+    // a sprite moving three pixels a frame has jumped six between the frames it is
+    // actually drawn on, so the region has to reach at least that far to keep hold of
+    // its edges. seven covers it and still leaves the region a few percent of the screen
+    constexpr int kSpread = 7;   // pixels the region grows by, so it can follow movement
+    constexpr int kHold   = 3;   // frames it survives without being seen again
+
+    const uint32_t* cur = &frame_done[0][0];
     uint32_t* p1 = &frame_prev[0][0];
     uint32_t* p2 = &frame_prev2[0][0];
-    uint32_t* out = &frame_out[0][0];
 
-    for (int i = 0; i < 144 * 160; i++) {
-        uint32_t c = cur[i];
-        if (frame_history >= 2 && c == p2[i] && c != p1[i]) {
-            uint32_t o = p1[i];
-            // the two low bits of each channel go with the shift, which is invisible,
-            // and keeps this to one add per pixel
-            out[i] = 0xFF000000u | ((((c ^ o) & 0xFEFEFEu) >> 1) + (c & o & 0xFFFFFFu));
-        } else {
-            out[i] = c;
+    // find the pixels that are strobing right now
+    for (int y = 0; y < 144; y++)
+        for (int x = 0; x < 160; x++) {
+            int i = y * 160 + x;
+            flicker_tmp[y][x] = (frame_history >= 2 && cur[i] == p2[i] && cur[i] != p1[i])
+                              ? 1 : 0;
         }
-        p2[i] = p1[i];
-        p1[i] = c;
-    }
+
+    // grow that outwards, one axis at a time so the cost stays linear
+    for (int y = 0; y < 144; y++)
+        for (int x = 0; x < 160; x++) {
+            uint8_t hit = 0;
+            for (int d = -kSpread; d <= kSpread && !hit; d++) {
+                int sx = x + d;
+                if (sx >= 0 && sx < 160)
+                    hit = flicker_tmp[y][sx];
+            }
+            if (hit)
+                flicker_mask[y][x] = kHold;
+        }
+    for (int x = 0; x < 160; x++)
+        for (int y = 0; y < 144; y++) {
+            uint8_t hit = 0;
+            for (int d = -kSpread; d <= kSpread && !hit; d++) {
+                int sy = y + d;
+                if (sy >= 0 && sy < 144)
+                    hit = flicker_tmp[sy][x];
+            }
+            if (hit)
+                flicker_mask[y][x] = kHold;
+        }
+
+    uint32_t* out = &frame_out[0][0];
+    for (int y = 0; y < 144; y++)
+        for (int x = 0; x < 160; x++) {
+            int i = y * 160 + x;
+            uint32_t c = cur[i];
+            if (flicker_mask[y][x]) {
+                uint32_t o = p1[i];
+                // the two low bits of each channel go with the shift, which is invisible,
+                // and keeps this to one add per pixel
+                out[i] = 0xFF000000u | ((((c ^ o) & 0xFEFEFEu) >> 1) + (c & o & 0xFFFFFFu));
+                flicker_mask[y][x]--;
+            } else {
+                out[i] = c;
+            }
+            p2[i] = p1[i];
+            p1[i] = c;
+        }
     if (frame_history < 2)
         frame_history++;
 }
 
 const uint32_t* App::present_frame() const {
-    return frame_blend && frame_history >= 2 ? &frame_out[0][0] : &ppu->framebuffer[0][0];
+    if (!have_frame_done)
+        return &ppu->framebuffer[0][0];
+    return frame_blend && frame_history >= 2 ? &frame_out[0][0] : &frame_done[0][0];
 }
 
 // the renderer of the games inside the actual emulator
@@ -1679,7 +1743,7 @@ void App::draw_settings(float w, float h) {
         case TAB_GAME: {
             // games that flicker a sprite every other frame to fake a see through one
             // rely on the panel being slow, so the two frames are averaged for them
-            if (toggle_row("deflicker", "##blend", frame_blend)) {
+            if (toggle_row("motion blur", "##blend", frame_blend)) {
                 frame_blend = !frame_blend;
                 frame_history = 0;
                 save_settings();

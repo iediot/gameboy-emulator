@@ -29,7 +29,7 @@ timers and mappers all implemented from the hardware documentation.
 - `EI` immediately followed by `HALT` no longer triggers the HALT bug, and a VRAM transfer
   now costs the CPU the cycles it costs on hardware.
 
-- **Deflicker** — games that fake a see-through sprite by flashing it every other frame
+- **Motion blur** — games that fake a see-through sprite by flashing it every other frame
   counted on the original screen being slow enough to blur the two together. A modern
   panel is not, so the sprite strobes instead. Turning this on averages those two frames
   back together. Only the pixels actually flickering are touched, so nothing that simply

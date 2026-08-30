@@ -75,11 +75,21 @@ private:
        actually flickering are touched: a pixel that matches the frame before last and
        differs from the one in between is being strobed, whereas something merely moving
        almost never lands back on its own value from two frames ago */
+    /* the ppu draws straight into its own buffer a pixel at a time, so presenting that
+       buffer mid frame shows the new picture torn across the top of the old one. only
+       finished frames are copied here, and only this is ever put on screen */
+    uint32_t frame_done[144][160] = {};
+    bool have_frame_done = false;
+
     bool frame_blend = false;
     uint32_t frame_prev[144][160] = {};    // the frame before this one
     uint32_t frame_prev2[144][160] = {};   // and the one before that
     uint32_t frame_out[144][160] = {};
     int frame_history = 0;                 // frames seen since the history was reset
+    // where the strobing is. spread outwards a little and held for a few frames so the
+    // region keeps up with a sprite that is moving while it flickers
+    uint8_t flicker_mask[144][160] = {};
+    uint8_t flicker_tmp[144][160] = {};
     void blend_frame();
     const uint32_t* present_frame() const;
 

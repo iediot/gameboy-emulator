@@ -484,7 +484,7 @@ void Cpu::do_bus() {
                 mem.write_direct(0xFF05, bus_val);
             // the bus lands after the peripherals have had this cycle, so the lcd would
             // otherwise not see its own control register until the next one
-            if (bus_addr == 0xFF40)
+            if (bus_addr == 0xFF40 || bus_addr == 0xFF41)
                 ppu.step(0);
         }
     }

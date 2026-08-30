@@ -562,6 +562,9 @@ void Memory::write(uint16_t address, uint8_t value) {
 
     data[address] = value;
 
+    if (address == 0xFF41 && !cgb_enabled && (data[0xFF40] & 0x80))
+        stat_glitch = true;
+
     if (address == 0xFF02) {
         // only a transfer clocked from this side can finish on its own, one waiting on
         // an absent cable's clock hangs exactly as it would on hardware

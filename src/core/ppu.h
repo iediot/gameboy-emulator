@@ -42,11 +42,7 @@ public:
     uint16_t scanline_cycles = 0;
     uint8_t ly_counter = 0;
     bool lcd_was_on = true;
-    // a real panel does not go white the instant the lcd is switched off, its pixels
-    // fade over tens of milliseconds. games flick the lcd off for a moment to get at
-    // vram, and blanking on the spot turns that into a full frame of white
-    uint32_t lcd_off_dots = 0;
-    bool lcd_blanked = false;
+    bool lcd_blanked = false;   // the buffer has been cleared for this lcd off period
     bool lcd_first_line = false;
     // finished argb pixels, the dmg shades are baked in here so both the colour and the
     // monochrome path hand the frontend the same thing
@@ -55,6 +51,9 @@ public:
     uint8_t window_line_counter = 0;
 
     bool frame_ready = false;
+    // how many of this frame's 144 lines the fetcher actually got through. an lcd that
+    // was switched off part way leaves the rest holding the previous frame's pixels
+    int lines_drawn = 0;
 
     bool stat_line = false;
 
@@ -107,6 +106,7 @@ public:
     uint8_t fetch_attr = 0;
     uint8_t fetch_lo = 0;
     uint8_t fetch_hi = 0;
+    int window_stall = 0;   // dots the window's fetcher restart is holding the line for
     int obj_stall = 0;      // dots an object fetch is holding the shifter for
     int obj_pending = -1;   // which scanned object that fetch is for
     int obj_penalty_tile = -1;  // the tile that has already paid the alignment wait

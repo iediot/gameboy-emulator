@@ -72,6 +72,7 @@ void Ppu::line_start() {
     first_fetch = true;
     in_window = false;
     window_started = false;
+    window_stall = 0;
     obj_stall = 0;
     obj_pending = -1;
     obj_penalty_tile = -1;
@@ -276,8 +277,10 @@ void Ppu::shift_pixel() {
     if (LY < 144 && lx < 160)
         framebuffer[LY][lx] = out;
     lx++;
-    if (lx >= 160)
+    if (lx >= 160) {
         line_active = false;
+        lines_drawn++;
+    }
 }
 
 // one dot of mode 3, in the order the hardware does it: the window can take the fetcher
@@ -307,8 +310,19 @@ void Ppu::mode3_dot() {
             // window off and back on again picks up where it left off
             if (first)
                 fetch_x = 0;
+            /* reloading the fetcher onto the window's map costs the line six dots. part
+               way along one, emptying the queue exacts that on its own because the
+               shifter then has to wait for a whole fetch. at the very start of a line
+               there was nothing in the queue to throw away, so it has to be charged */
+            if (lx == 0)
+                window_stall = 5;
             return;
         }
+    }
+
+    if (window_stall > 0) {
+        window_stall--;
+        return;
     }
 
     if (obj_stall > 0) {
@@ -347,21 +361,16 @@ void Ppu::step(uint8_t cycles) {
         window_line_counter = 0;
         wy_triggered = false;
         line_active = false;
+        lines_drawn = 0;
         // the mode sources go quiet but the retained coincidence bit still drives the
         // interrupt line, so switching back on with the same result raises no edge
         uint8_t off_stat = mem.read_direct(STAT_ADDR);
         stat_line = (off_stat & 0x40) && (off_stat & 0x04);
         prev_mode = 0;
-        // the panel goes blank with the lcd, holding the last frame instead shows
-        // whatever vram happened to contain while a game uploads with it switched off
-        if (lcd_was_on) {
-            lcd_off_dots = 0;
-            lcd_blanked = false;
-        }
-        lcd_off_dots += cycles;
-        // only once it has been off long enough for the panel to actually have faded,
-        // and a colourised game fades to its own lightest colour rather than to white
-        if (!lcd_blanked && lcd_off_dots > 70224 * 2) {
+        /* the panel goes blank with the lcd. holding the last frame instead was tried
+           and backed out: it leaves whatever the lcd interrupted part way through
+           sitting under the next thing drawn, which shows as debris on a loading screen */
+        if (!lcd_blanked) {
             lcd_blanked = true;
             uint32_t blank = mem.cgb_mode ? 0xFFFFFFFF : bg_shade(mem, 0);
             for (int y = 0; y < 144; y++)
@@ -376,6 +385,7 @@ void Ppu::step(uint8_t cycles) {
     // one m-cycle in, which is what oam_bug/1-lcd_sync measures
     if (!lcd_was_on) {
         lcd_was_on = true;
+        lcd_blanked = false;
         scanline_cycles = 4;
         lcd_first_line = true;
     }
@@ -388,6 +398,8 @@ void Ppu::step(uint8_t cycles) {
         ly_counter++;
         lcd_first_line = false;
 
+        if (ly_counter == 0 || ly_counter >= 154)
+            lines_drawn = 0;
         if (ly_counter >= 154) {
             ly_counter = 0;
             window_line_counter = 0; // also reset the window counter
@@ -469,6 +481,16 @@ void Ppu::step(uint8_t cycles) {
              || (mode == 1 && (STAT & 0x10))
              || (oam_window && (STAT & 0x20))
              || (coincidence && (STAT & 0x40));
+
+    /* the write drives every source for that one instant, so whichever condition is true
+       right then gets through even though the game never enabled it. the oam source is
+       not one of them. it is a pulse and not a state: latching it into stat_line would
+       swallow the next real edge */
+    if (mem.stat_glitch) {
+        mem.stat_glitch = false;
+        if (!stat_line && (hblank_int || mode == 1 || coincidence))
+            mem.write_direct(IF_ADDR, mem.read_direct(IF_ADDR) | 0x02);
+    }
 
     if (line && !stat_line)
         mem.write_direct(IF_ADDR, mem.read_direct(IF_ADDR) | 0x02);

@@ -167,6 +167,9 @@ int main(int argc, char** argv) {
     bool breakpoints = false;
     // gbmicrotest leaves its verdict in three bytes of hram rather than saying anything
     bool micro = false;
+    // mimics the frontend's loop, to see how often a frame reaches the screen with
+    // lines on it that were never drawn this pass
+    bool present = false;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--press" && i + 1 < argc) {
@@ -194,6 +197,8 @@ int main(int argc, char** argv) {
             breakpoints = true;
         else if (a == "--micro")
             micro = true;
+        else if (a == "--present")
+            present = true;
         else if (a == "--seconds" && i + 1 < argc)
             seconds = atof(argv[++i]);
     }
@@ -228,12 +233,58 @@ int main(int argc, char** argv) {
     cpu.apply_boot_state();
 
     const uint64_t budget = (uint64_t)(seconds * 4194304.0);
+    uint64_t presented = 0, torn = 0, capped = 0, speckled = 0;
     // --hot dumps where a rom that never finishes is actually spending its time
     bool hot = false;
     for (int i = 2; i < argc; i++)
         if (std::string(argv[i]) == "--hot")
             hot = true;
     std::vector<uint32_t> pc_hits(0x10000, 0);
+    if (present) {
+        while (cpu.total_cycles < budget) {
+            uint64_t start = cpu.total_cycles;
+            uint64_t cap = mem.double_speed ? 140448u : 70224u;
+            while (!ppu.frame_ready && cpu.total_cycles - start < cap) {
+                cpu.step();
+                apu.samples.clear();
+            }
+            bool complete = ppu.frame_ready;
+            ppu.frame_ready = false;
+            if (!complete)
+                capped++;
+            if (complete || ppu.lcd_blanked) {
+                presented++;
+                if (complete && ppu.lines_drawn < 144)
+                    torn++;
+                // hunt for the reported symptom: a screen that is nearly all one colour
+                // with a scattering of something else on it
+                uint32_t first = ppu.framebuffer[0][0];
+                int same = 0;
+                for (int y = 0; y < 144; y++)
+                    for (int x = 0; x < 160; x++)
+                        if (ppu.framebuffer[y][x] == first)
+                            same++;
+                int odd = 144 * 160 - same;
+                if (odd > 0 && odd < 144 * 160 / 12) {
+                    if (speckled++ < 3 && !fb_path.empty()) {
+                        char name[512];
+                        std::snprintf(name, sizeof name, "%s.%d.bin", fb_path.c_str(),
+                                      (int)speckled);
+                        std::ofstream o(name, std::ios::binary);
+                        o.write((const char*)ppu.framebuffer, sizeof ppu.framebuffer);
+                        std::printf("  speckled frame %llu: %d odd px, saved %s\n",
+                                    (unsigned long long)presented, odd, name);
+                    }
+                }
+            }
+        }
+        std::printf("PRESENT %s presented=%llu incomplete=%llu cap-exits=%llu speckled=%llu\n",
+                    path.c_str(), (unsigned long long)presented,
+                    (unsigned long long)torn, (unsigned long long)capped,
+                    (unsigned long long)speckled);
+        return 0;
+    }
+
     Verdict v;
     uint64_t next_check = 0;
     // a rom that has said all it is going to say parks itself in a one instruction loop

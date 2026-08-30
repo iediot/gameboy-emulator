@@ -54,6 +54,10 @@ public:
     // a vram transfer stops the cpu dead while it runs, eight m-cycles per block
     uint32_t dma_stall = 0;
     Apu* apu = nullptr;
+    /* writing stat on a dmg momentarily drives every one of its interrupt sources as if
+       it were enabled, so any condition that happens to be true right then fires a
+       spurious stat interrupt. the colour hardware fixed it */
+    bool stat_glitch = false;
     bool div_reset = false;
     bool tima_written = false;  // a write during the reload delay cancels it
 
