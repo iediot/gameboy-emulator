@@ -2967,15 +2967,21 @@ void App::draw_saves(float w, float h) {
 
         // opening the cartridge on its own, with only its battery save behind it
         {
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("battery save");
-            ImGui::SameLine();
-            float fh = ImGui::GetFrameHeight();
-            float row = fh * 1.2f;   // the same height the slots below it use
-            float bw = ImGui::CalcTextSize("play").x + fh;
-            ImVec2 tp = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos(ImVec2(right_edge - ctrl_gap - bw,
-                                             tp.y - (row - fh) * 0.5f));
+            /* laid out the way the slots below are: the row claims its height first and
+               everything is placed inside it. centring a taller control on a plain text
+               line instead puts half of it above the top of the list, where it is clipped */
+            float fh  = ImGui::GetFrameHeight();
+            float lh  = ImGui::GetTextLineHeight();
+            float row = fh * 1.2f;
+            float bw  = ImGui::CalcTextSize("play").x + fh;
+
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(1.0f, row));
+            ImVec2 after = ImGui::GetCursorScreenPos();
+
+            ImGui::GetWindowDrawList()->AddText(ImVec2(rp.x, rp.y + (row - lh) * 0.5f),
+                                                theme::at().text, "battery save");
+            ImGui::SetCursorScreenPos(ImVec2(right_edge - ctrl_gap - bw, rp.y));
             if (glass::button("play", ImVec2(bw, row))) {
                 // no slot, so this reads the plain .sav and nothing is written back
                 // as a state on the way out
@@ -2983,6 +2989,7 @@ void App::draw_saves(float w, float h) {
                 load_rom(state_rom);
                 launched = true;
             }
+            ImGui::SetCursorScreenPos(after);
         }
 
         for (int i = 0; i < shown && !launched; i++) {
@@ -3071,9 +3078,21 @@ void App::draw_saves(float w, float h) {
         if (state_pending_slot >= 0 && !ImGui::IsPopupOpen("confirm_state_delete"))
             ImGui::OpenPopup("confirm_state_delete");
 
+        /* the same confirmation the library uses to throw a game away, down to the
+           padding and the button size, so the two read as one dialog on each device */
+#if GB_MOBILE
+        ImVec2 cpad(w * 0.05f, w * 0.05f);
+        ImVec2 cbtn(w * 0.32f, h * 0.07f);
+        float  crnd = 16.0f;
+#else
+        ImVec2 cpad(24, 24);
+        ImVec2 cbtn(w * 0.10f, h * 0.09f);
+        float  crnd = 12.0f;
+#endif
         ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing,
                                 ImVec2(0.5f, 0.5f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 24));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, cpad);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, crnd);
         if (ImGui::BeginPopupModal("confirm_state_delete", nullptr,
                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
                 ImGuiWindowFlags_NoMove)) {
@@ -3081,7 +3100,7 @@ void App::draw_saves(float w, float h) {
             ImGui::TextUnformatted(q.c_str());
             ImGui::Dummy(ImVec2(0, h * 0.02f));
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
-            if (glass::button("delete", ImVec2(w * 0.10f, close_h))) {
+            if (glass::button("delete", cbtn)) {
                 std::filesystem::remove(state_slot_path(state_rom, state_pending_slot), ec);
                 // the slot's cartridge save is part of the slot, it goes with it
                 std::filesystem::remove(battery_path(state_rom, state_pending_slot), ec);
@@ -3091,13 +3110,13 @@ void App::draw_saves(float w, float h) {
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (glass::button("cancel", ImVec2(w * 0.10f, close_h))) {
+            if (glass::button("cancel", cbtn)) {
                 state_pending_slot = -1;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
 
         if (!launched) {
             ImGui::SetCursorPos(ImVec2(pad, ws.y - pad - close_h));
