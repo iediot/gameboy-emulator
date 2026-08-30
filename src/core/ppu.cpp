@@ -257,6 +257,7 @@ void Ppu::shift_pixel() {
     else
         out = bg_shade(mem, 0);
 
+    bool obj_won = false;
     if ((LCDC & 0x02) && o.color != 0) {
         bool bg_wins;
         if (mem.cgb_mode)
@@ -265,6 +266,7 @@ void Ppu::shift_pixel() {
             bg_wins = o.priority && bg_color != 0;
 
         if (!bg_wins) {
+            obj_won = true;
             if (mem.cgb_mode) {
                 out = cgb_rgb(mem.obj_palette, o.palette, o.color);
             } else {
@@ -274,8 +276,10 @@ void Ppu::shift_pixel() {
         }
     }
 
-    if (LY < 144 && lx < 160)
+    if (LY < 144 && lx < 160) {
         framebuffer[LY][lx] = out;
+        obj_pixel[LY][lx] = obj_won ? 1 : 0;
+    }
     lx++;
     if (lx >= 160) {
         line_active = false;
@@ -287,7 +291,6 @@ void Ppu::shift_pixel() {
 // over, an object can seize it, otherwise fetcher and shifter both advance
 void Ppu::mode3_dot() {
     uint8_t LCDC = mem.read_direct(LCDC_ADDR);
-    uint8_t LY   = mem.read_direct(LY_ADDR);
 
     // clearing the enable part way along a line drops the fetcher back onto the
     // background there and then, mid tile and all
@@ -509,4 +512,85 @@ void Ppu::step(uint8_t cycles) {
     }
 
     prev_mode = mode;
+}
+
+/* the fetcher and the shifter are part of the machine's state just as much as the
+   registers are, so a state taken part way along a scanline resumes on that same dot
+   with the same pixels still queued */
+void Ppu::save_state(state::Writer& w) const {
+    w.raw(scanline_cycles);
+    w.raw(ly_counter);
+    w.raw(lcd_was_on);
+    w.raw(lcd_first_line);
+    w.raw(lcd_blanked);
+    w.bytes(framebuffer, sizeof framebuffer);
+    w.raw(prev_mode);
+    w.raw(window_line_counter);
+    w.raw(frame_ready);
+    w.raw(lines_drawn);
+    w.raw(stat_line);
+    w.bytes(line_sprites, sizeof line_sprites);
+    w.raw(line_sprite_count);
+    w.bytes(bg_fifo, sizeof bg_fifo);
+    w.raw(bg_fifo_head);
+    w.raw(bg_fifo_len);
+    w.bytes(obj_fifo, sizeof obj_fifo);
+    w.raw(lx);
+    w.raw(discard);
+    w.raw(fetch_step);
+    w.raw(fetch_dot);
+    w.raw(fetch_x);
+    w.raw(first_fetch);
+    w.raw(in_window);
+    w.raw(window_started);
+    w.raw(fetch_tile);
+    w.raw(fetch_attr);
+    w.raw(fetch_lo);
+    w.raw(fetch_hi);
+    w.raw(window_stall);
+    w.raw(obj_stall);
+    w.raw(obj_pending);
+    w.raw(obj_penalty_tile);
+    w.bytes(obj_done, sizeof obj_done);
+    w.raw(wy_triggered);
+    w.raw(line_active);
+}
+
+void Ppu::load_state(state::Reader& r) {
+    r.raw(scanline_cycles);
+    r.raw(ly_counter);
+    r.raw(lcd_was_on);
+    r.raw(lcd_first_line);
+    r.raw(lcd_blanked);
+    r.bytes(framebuffer, sizeof framebuffer);
+    r.raw(prev_mode);
+    r.raw(window_line_counter);
+    r.raw(frame_ready);
+    r.raw(lines_drawn);
+    r.raw(stat_line);
+    r.bytes(line_sprites, sizeof line_sprites);
+    r.raw(line_sprite_count);
+    r.bytes(bg_fifo, sizeof bg_fifo);
+    r.raw(bg_fifo_head);
+    r.raw(bg_fifo_len);
+    r.bytes(obj_fifo, sizeof obj_fifo);
+    r.raw(lx);
+    r.raw(discard);
+    r.raw(fetch_step);
+    r.raw(fetch_dot);
+    r.raw(fetch_x);
+    r.raw(first_fetch);
+    r.raw(in_window);
+    r.raw(window_started);
+    r.raw(fetch_tile);
+    r.raw(fetch_attr);
+    r.raw(fetch_lo);
+    r.raw(fetch_hi);
+    r.raw(window_stall);
+    r.raw(obj_stall);
+    r.raw(obj_pending);
+    r.raw(obj_penalty_tile);
+    r.bytes(obj_done, sizeof obj_done);
+    r.raw(wy_triggered);
+    r.raw(line_active);
 }

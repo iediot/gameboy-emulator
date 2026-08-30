@@ -3450,3 +3450,56 @@ uint8_t Cpu::step() {
 
     return 0;
 }
+
+// the registers, the interrupt state, and everything the timer and the bus carry between
+// t-cycles. the cartridge and the peripherals write themselves out separately
+void Cpu::save_state(state::Writer& w) const {
+    w.raw(A); w.raw(B); w.raw(C); w.raw(D);
+    w.raw(E); w.raw(F); w.raw(H); w.raw(L);
+    w.raw(SP); w.raw(PC);
+    w.raw(IME);
+    w.raw(ime_pending);
+    w.raw(halted);
+    w.raw(halt_bug);
+    w.raw(locked);
+    w.raw(total_cycles);
+    w.raw(internal_div);
+    w.raw(last_and_result);
+    w.raw(last_apu_bit);
+    w.raw(last_serial_bit);
+    w.raw(tima_reload_delay);
+    w.raw(bus_kind);
+    w.raw(bus_addr);
+    w.raw(bus_val);
+    w.raw(bus_result);
+    w.raw(speed_phase);
+    w.raw(bus_at);
+    w.raw(bus_late);
+    w.raw(tima_reloaded);
+}
+
+void Cpu::load_state(state::Reader& r) {
+    r.raw(A); r.raw(B); r.raw(C); r.raw(D);
+    r.raw(E); r.raw(F); r.raw(H); r.raw(L);
+    r.raw(SP); r.raw(PC);
+    r.raw(IME);
+    r.raw(ime_pending);
+    r.raw(halted);
+    r.raw(halt_bug);
+    r.raw(locked);
+    r.raw(total_cycles);
+    r.raw(internal_div);
+    r.raw(last_and_result);
+    r.raw(last_apu_bit);
+    r.raw(last_serial_bit);
+    r.raw(tima_reload_delay);
+    r.raw(bus_kind);
+    r.raw(bus_addr);
+    r.raw(bus_val);
+    r.raw(bus_result);
+    r.raw(speed_phase);
+    r.raw(bus_at);
+    r.raw(bus_late);
+    r.raw(tima_reloaded);
+    debug_break = false;
+}

@@ -84,14 +84,23 @@ private:
     bool frame_blend = false;
     uint32_t frame_prev[144][160] = {};    // the frame before this one
     uint32_t frame_prev2[144][160] = {};   // and the one before that
+    uint32_t frame_prev3[144][160] = {};   // and one more, to confirm a real alternation
     uint32_t frame_out[144][160] = {};
     int frame_history = 0;                 // frames seen since the history was reset
     // where the strobing is. spread outwards a little and held for a few frames so the
     // region keeps up with a sprite that is moving while it flickers
+    uint8_t obj_now[144][160] = {};        // objects in the frame being shown
+    uint8_t obj_before[144][160] = {};     // and in the one before it
     uint8_t flicker_mask[144][160] = {};
     uint8_t flicker_tmp[144][160] = {};
     void blend_frame();
     const uint32_t* present_frame() const;
+
+    /* how fast the machine is run, as a multiple of its own clock. the panel is still
+       presented at the console's rate, so the speed decides how many of its frames are
+       emulated between one presentation and the next */
+    int speed_index = 3;          // x1
+    float frame_debt = 0.0f;      // fractional frames owed, for the speeds between
 
     int battery_flush = 0;
     int rtc_flush = 0;    // an rtc cart is never idle, so its clock is written out rarely
@@ -104,6 +113,11 @@ private:
     float carousel_vel = 0.0f;
     // the library is split by cartridge type, 0 is game boy and 1 is game boy color
     int library_tab = 0;
+    /* where the carousel was left on each shelf, so switching between them and coming
+       back to the app both land where you were rather than at the first cartridge */
+    float shelf_pos[2] = {0.0f, 0.0f};
+    bool quitting = false;
+    int shelf_saved = -1;    // the centred game the shelf position was last written for
     float tab_slide = 0.0f;      // eased position of the pill indicator
     // which shelf each rom is filed on, straight off its extension. that is how the
     // cartridge was sold, which is a different question from whether it runs in colour
@@ -118,11 +132,22 @@ private:
     float iridescence = 0.0f;      // eased, 1 while a colour context is on screen
     void draw_library_tabs(float cx, float cy, float pill_w, float pill_h);
     int library_view(std::vector<int>& out) const;
+    /* a tab press is recorded rather than acted on, and taken up at the top of the next
+       frame. the phone draws the tabs before the shelf, so switching in place would put
+       the other shelf's position against this shelf's list for one frame */
+    int pending_tab = -1;
+    void apply_tab_switch();
+    // called once the shelf has come to rest, to fold the position back into the shelf
+    // and write it out
+    void settle_shelf(int count, int r_centre);
     ScaleMode scale_mode = ScaleMode::NORMAL;
     bool settings_open = false;
     int settings_tab = 0;
     int rebind_target = -1;
     float settings_scroll = 0.0f;
+    float saves_scroll = 0.0f;
+    // drives a list's scroll from the wheel and from dragging it, with no visible bar
+    void scroll_body(float& target);
     int fps_index = 1;
     bool vsync = true;
     bool hidpi = false;
@@ -168,6 +193,36 @@ private:
     void scan_roms();
     void load_rom(const std::string& name);
     void load_battery_ram(const std::string& name);
+    /* every slot keeps its own cartridge save. one shared .sav would mean the slots
+       write over each other's in game progress, and a fresh slot would start out
+       holding whichever slot last ran. the battery row keeps the plain .sav so it
+       stays the file other emulators expect */
+    std::string battery_path(const std::string& rom, int slot) const;
+
+    /* save states. three slots per game, written beside its .sav. hitting play opens the
+       slot list rather than starting straight away, so a game can be resumed from any of
+       them or begun fresh */
+    // slots are open ended, only ever one empty one is offered past the used ones
+    static constexpr int kStateSlotScan = 64;   // how far to look for existing slots
+    /* the slot list is read off disk when the panel opens and after a delete, never per
+       frame. sixty four stats every frame is nothing on a desktop and locks up a phone */
+    std::vector<char> slot_used;
+    std::vector<std::string> slot_when;
+    void scan_slots(const std::string& rom);
+    std::string current_rom;     // the game that is loaded, for its state slots
+    std::string state_note;      // shown briefly after a save or load
+    uint32_t state_note_until = 0;
+    std::string state_rom;       // the game the slot list is showing
+    int state_pending_slot = -1; // the slot a delete is waiting on confirmation for
+    int active_slot = -1;        // the slot this session was started from, written on exit
+    std::string state_slot_path(const std::string& rom, int slot) const;
+    /* a state is a dump of the core's own structs, so it only means anything to the
+       build that wrote it. adding a field anywhere in the cpu, memory, ppu or apu makes
+       every older file the wrong length, which is what this reports */
+    bool state_stale = false;
+    bool write_state(int slot);
+    bool read_state(int slot);
+    void draw_saves(float w, float h);
     void refresh_palette();
     void save_battery_ram();
     void add_game();

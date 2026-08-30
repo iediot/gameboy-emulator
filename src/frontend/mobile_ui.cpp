@@ -442,6 +442,7 @@ void App::render_menu_mobile() {
     // the library is split by cartridge type, the pill sits centred in the header row
     // with the cog opposite it on the right
     std::vector<int> view;
+    apply_tab_switch();
     int count = library_view(view);
 
     float hdr_r = std::max(w, h) * 0.0245f;
@@ -487,6 +488,7 @@ void App::render_menu_mobile() {
         int centre = wrap((int)std::lround(carousel_pos));
         int r_centre = view[centre];
         carousel_index = r_centre;
+        settle_shelf(count, r_centre);
 
         // horizontal fan: selected game centred and on top, next games to the right, previous ones to the left
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -619,8 +621,12 @@ void App::render_menu_mobile() {
         float row_x = (w - row_w) * 0.5f;
         float row_y = title_y + h * 0.05f;
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
-        if (glass::button("play", ImVec2(play_w, btn_h)))
-            load_rom(rom_list[r_centre]);
+        if (glass::button("play", ImVec2(play_w, btn_h))) {
+            // the slot list decides whether this is a fresh start or a resume
+            state_rom = rom_list[r_centre];
+            scan_slots(state_rom);
+            ImGui::OpenPopup("saves");
+        }
         ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
         if (glass::button("mods", ImVec2(mods_w, btn_h))) {
             scan_mods(rom_list[r_centre]);
@@ -634,6 +640,7 @@ void App::render_menu_mobile() {
         ImGui::PopStyleColor(3);
 
         draw_mods(w, h);
+    draw_saves(w, h);
 
         // a second, deliberate tap is required so a stray delete never wipes a game by accident
         ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));

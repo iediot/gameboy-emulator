@@ -9,6 +9,7 @@
 #include <array>
 #include <string>
 #include <vector>
+#include "state.h"
 
 enum class MbcType {
     NONE,
@@ -151,6 +152,9 @@ public:
         return vram[bank & 1][address - 0x8000];
     }
     void load_rom(const std::vector<uint8_t>& rom_to_load);
+
+    void save_state(state::Writer& w) const;
+    void load_state(state::Reader& r);
 };
 
 #endif //GAMEBOY_EMU_MEMORY_H

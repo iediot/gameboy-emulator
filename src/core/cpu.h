@@ -9,6 +9,7 @@
 #include "memory.h"
 #include "ppu.h"
 #include "apu.h"
+#include "state.h"
 
 class Cpu {
 private:
@@ -111,6 +112,9 @@ public:
 
     // Main loop
     uint8_t step();
+
+    void save_state(state::Writer& w) const;
+    void load_state(state::Reader& r);
 };
 
 #endif //GAMEBOY_EMU_CPU_H

@@ -428,3 +428,44 @@ void Apu::step(uint8_t cycles) {
         }
     }
 }
+
+// every field the channels carry, so a state resumes mid note rather than restarting it
+void Apu::save_state(state::Writer& w) const {
+    w.bytes(registers.data(), registers.size());
+    w.bytes(wave_ram.data(), wave_ram.size());
+    w.raw(sample_clock);
+    w.raw(power);
+    w.raw(frame_step);
+    w.raw(cgb);
+    w.raw(ch1);
+    w.raw(ch2);
+    w.raw(ch3);
+    w.raw(ch4);
+    w.raw(hp_left);
+    w.raw(hp_right);
+    w.raw(acc_left);
+    w.raw(acc_right);
+    w.raw(acc_count);
+    w.raw(fade);
+}
+
+void Apu::load_state(state::Reader& r) {
+    r.bytes(registers.data(), registers.size());
+    r.bytes(wave_ram.data(), wave_ram.size());
+    r.raw(sample_clock);
+    r.raw(power);
+    r.raw(frame_step);
+    r.raw(cgb);
+    r.raw(ch1);
+    r.raw(ch2);
+    r.raw(ch3);
+    r.raw(ch4);
+    r.raw(hp_left);
+    r.raw(hp_right);
+    r.raw(acc_left);
+    r.raw(acc_right);
+    r.raw(acc_count);
+    r.raw(fade);
+    // whatever was queued belongs to the moment the state was taken, not to now
+    samples.clear();
+}

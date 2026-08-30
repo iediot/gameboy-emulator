@@ -47,6 +47,19 @@ bool wants_cgb(const std::string& path, const std::vector<uint8_t>& rom) {
         if (!isalnum((unsigned char)c))
             alnum = false;
 
+    /* the age suite spells its models differently: ncm is a colour console running a
+       mono cartridge, nocgb is the mono console, and ds is a colour one the rom puts
+       into double speed itself */
+    if (alnum) {
+        std::string lower;
+        for (char c : tag)
+            lower.push_back((char)tolower((unsigned char)c));
+        if (lower.compare(0, 3, "ncm") == 0 || lower == "ds")
+            return true;
+        if (lower == "nocgb")
+            return false;
+    }
+
     if (alnum) {
         std::string low;
         for (char c : tag)
@@ -170,6 +183,9 @@ int main(int argc, char** argv) {
     // mimics the frontend's loop, to see how often a frame reaches the screen with
     // lines on it that were never drawn this pass
     bool present = false;
+    // --state: run, snapshot, run on, restore, run the same again, compare. anything the
+    // state forgets shows up as a divergence
+    bool statetest = false;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--press" && i + 1 < argc) {
@@ -199,6 +215,8 @@ int main(int argc, char** argv) {
             micro = true;
         else if (a == "--present")
             present = true;
+        else if (a == "--state")
+            statetest = true;
         else if (a == "--seconds" && i + 1 < argc)
             seconds = atof(argv[++i]);
     }
@@ -240,6 +258,40 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--hot")
             hot = true;
     std::vector<uint32_t> pc_hits(0x10000, 0);
+    if (statetest) {
+        const uint64_t mark = (uint64_t)(seconds * 4194304.0);
+        while (cpu.total_cycles < mark) { cpu.step(); apu.samples.clear(); }
+
+        std::vector<uint8_t> blob;
+        state::Writer w{blob};
+        cpu.save_state(w); mem.save_state(w); ppu.save_state(w); apu.save_state(w);
+
+        const uint64_t run_on = 2000000;
+        uint64_t until = cpu.total_cycles + run_on;
+        while (cpu.total_cycles < until) { cpu.step(); apu.samples.clear(); }
+        std::vector<uint8_t> first(sizeof ppu.framebuffer);
+        std::memcpy(first.data(), ppu.framebuffer, first.size());
+        uint64_t first_cycles = cpu.total_cycles;
+
+        state::Reader r{blob.data(), blob.data() + blob.size()};
+        cpu.load_state(r); mem.load_state(r); ppu.load_state(r); apu.load_state(r);
+        if (!r.ok) { std::printf("STATE %s reader ran short\n", path.c_str()); return 1; }
+
+        until = cpu.total_cycles + run_on;
+        while (cpu.total_cycles < until) { cpu.step(); apu.samples.clear(); }
+        std::vector<uint8_t> second(sizeof ppu.framebuffer);
+        std::memcpy(second.data(), ppu.framebuffer, second.size());
+
+        size_t diff = 0;
+        for (size_t i = 0; i < first.size(); i += 4)
+            if (std::memcmp(&first[i], &second[i], 4) != 0)
+                diff++;
+        bool same = diff == 0 && first_cycles == cpu.total_cycles;
+        std::printf("%s %s blob=%zu bytes, %zu px diverged\n", same ? "STATE-OK" : "STATE-BAD",
+                    path.c_str(), blob.size(), diff);
+        return same ? 0 : 1;
+    }
+
     if (present) {
         while (cpu.total_cycles < budget) {
             uint64_t start = cpu.total_cycles;

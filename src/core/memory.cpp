@@ -628,6 +628,9 @@ namespace {
     };
 
     // three colour offsets per entry, obj0 then obj1 then bg
+    /* each entry names three palettes in the table above as byte offsets, so every one
+       of them is a multiple of four. three were transcribed one short, which made them
+       straddle two palettes and read a scrambled ramp */
     const uint8_t kPaletteCombos[55][3] = {
         { 16, 16,116},
         { 72, 72, 72},
@@ -651,7 +654,7 @@ namespace {
         { 16, 16, 72},
         { 16, 16, 80},
         { 76, 76, 36},
-        { 15, 15, 44},
+        { 16, 16, 44},
         { 68, 68,  8},
         { 16, 16,  8},
         { 16, 16, 12},
@@ -663,9 +666,9 @@ namespace {
         { 96, 88, 96},
         { 64, 88, 32},
         { 68, 16, 52},
-        {111,  0, 56},
-        {111, 16, 60},
-        { 76, 91, 36},
+        {112,  0, 56},
+        {112, 16, 60},
+        { 76, 92, 36},
         { 64,112, 40},
         { 16, 92,112},
         { 68, 88,  8},
@@ -873,4 +876,97 @@ void Memory::load_rom(const std::vector<uint8_t>& rom_to_load) {
     data[0xFF47] = 0xFC; // BGP
     data[0xFF48] = 0xFF; // OBP0
     data[0xFF49] = 0xFF; // OBP1
+}
+
+/* everything the bus and the cartridge carry. the rom itself is not written, it is
+   reloaded from disk and the banking registers below put it back where it was */
+void Memory::save_state(state::Writer& w) const {
+    w.bytes(data.data(), data.size());
+    w.bytes(vram, sizeof vram);
+    w.raw(vram_bank);
+    w.bytes(wram, sizeof wram);
+    w.raw(wram_bank);
+    w.bytes(bg_palette, sizeof bg_palette);
+    w.bytes(obj_palette, sizeof obj_palette);
+    w.raw(cgb_mode);
+    w.raw(compat_palette);
+    w.bytes(compat_bg, sizeof compat_bg);
+    w.bytes(compat_obj, sizeof compat_obj);
+    w.raw(double_speed);
+    w.raw(speed_switch_armed);
+    w.raw(hdma_src); w.raw(hdma_dst); w.raw(hdma_left);
+    w.raw(hdma_hblank); w.raw(hdma_running); w.raw(dma_stall);
+    w.raw(stat_glitch);
+    w.raw(div_reset);
+    w.raw(tima_written);
+    w.raw(button_state);
+    w.raw(serial_active);
+    w.raw(serial_bits);
+    w.raw(banking_mode);
+    w.raw(rom_bank);
+    w.raw(upper_bank);
+    w.raw(mbc1_multicart);
+    w.raw(ram_enabled);
+    w.raw(ram_bank);
+    w.raw(has_rtc);
+    w.bytes(rtc, sizeof rtc);
+    w.bytes(rtc_latched, sizeof rtc_latched);
+    w.raw(rtc_select);
+    w.raw(rtc_last_latch);
+    w.raw(rtc_sub);
+    w.raw(dma_active); w.raw(dma_source); w.raw(dma_pending_source);
+    w.raw(dma_index); w.raw(dma_tick); w.raw(dma_delay);
+    uint32_t ram_size = (uint32_t)external_ram.size();
+    w.raw(ram_size);
+    if (ram_size)
+        w.bytes(external_ram.data(), ram_size);
+}
+
+void Memory::load_state(state::Reader& r) {
+    r.bytes(data.data(), data.size());
+    r.bytes(vram, sizeof vram);
+    r.raw(vram_bank);
+    r.bytes(wram, sizeof wram);
+    r.raw(wram_bank);
+    r.bytes(bg_palette, sizeof bg_palette);
+    r.bytes(obj_palette, sizeof obj_palette);
+    r.raw(cgb_mode);
+    r.raw(compat_palette);
+    r.bytes(compat_bg, sizeof compat_bg);
+    r.bytes(compat_obj, sizeof compat_obj);
+    r.raw(double_speed);
+    r.raw(speed_switch_armed);
+    r.raw(hdma_src); r.raw(hdma_dst); r.raw(hdma_left);
+    r.raw(hdma_hblank); r.raw(hdma_running); r.raw(dma_stall);
+    r.raw(stat_glitch);
+    r.raw(div_reset);
+    r.raw(tima_written);
+    r.raw(button_state);
+    r.raw(serial_active);
+    r.raw(serial_bits);
+    r.raw(banking_mode);
+    r.raw(rom_bank);
+    r.raw(upper_bank);
+    r.raw(mbc1_multicart);
+    r.raw(ram_enabled);
+    r.raw(ram_bank);
+    r.raw(has_rtc);
+    r.bytes(rtc, sizeof rtc);
+    r.bytes(rtc_latched, sizeof rtc_latched);
+    r.raw(rtc_select);
+    r.raw(rtc_last_latch);
+    r.raw(rtc_sub);
+    r.raw(dma_active); r.raw(dma_source); r.raw(dma_pending_source);
+    r.raw(dma_index); r.raw(dma_tick); r.raw(dma_delay);
+    uint32_t ram_size = 0;
+    r.raw(ram_size);
+    // a state whose cartridge ram is a different size than this cartridge's is not
+    // this cartridge's state
+    if (ram_size != external_ram.size()) {
+        r.ok = false;
+        return;
+    }
+    if (ram_size)
+        r.bytes(external_ram.data(), ram_size);
+    ram_dirty = true;
 }

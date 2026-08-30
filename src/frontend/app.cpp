@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <chrono>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -42,6 +43,14 @@ static int SDLCALL resize_watch(void* data, SDL_Event* e) {
     return 0;
 }
 #endif
+
+namespace {
+    // how fast the machine runs, as a multiple of its own clock
+    const char* const kSpeedNames[8] = {"x0.25", "x0.5", "x0.75", "x1",
+                                        "x1.25", "x1.5", "x1.75", "x2"};
+    constexpr float kSpeedMul[8] = {0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};
+}
+
 
 // constructor
 App::App() : state(AppState::MENU) {
@@ -86,6 +95,27 @@ App::App() : state(AppState::MENU) {
 #endif
     last_present = SDL_GetPerformanceCounter();
     scan_roms();
+
+    /* pick up where the library was left. the count on a shelf can have changed since,
+       so the remembered place is held inside it rather than trusted outright */
+    {
+        int count = 0;
+        for (int r = 0; r < (int)rom_list.size(); r++)
+            if (in_tab(r, library_tab))
+                count++;
+        int at = (count > 0)
+               ? ((((int)std::lround(shelf_pos[library_tab]) % count) + count) % count) : 0;
+        carousel_pos = carousel_target = (float)at;
+        carousel_vel = 0.0f;
+
+        /* point the index at the restored cartridge before a single frame is drawn, and
+           mark the place as already written so opening the app does not rewrite it */
+        std::vector<int> view;
+        if (library_view(view) > 0) {
+            carousel_index = view[std::min(at, (int)view.size() - 1)];
+            shelf_saved = carousel_index;
+        }
+    }
 }
 
 #if GB_DESKTOP && defined(__APPLE__)
@@ -440,6 +470,12 @@ void App::load_settings() {
             int v; if (f >> v && v >= 0 && v <= 5) fps_index = v;
         } else if (key == "vsync") {
             int v; if (f >> v) vsync = (v != 0);
+        } else if (key == "shelf") {
+            int v; if (f >> v && (v == 0 || v == 1)) library_tab = v;
+        } else if (key == "shelfpos") {
+            float a, b; if (f >> a >> b) { shelf_pos[0] = a; shelf_pos[1] = b; }
+        } else if (key == "speed") {
+            int v; if (f >> v && v >= 0 && v < 8) speed_index = v;
         } else if (key == "blend") {
             int v; if (f >> v) frame_blend = (v != 0);
         } else if (key == "hidpi") {
@@ -508,9 +544,14 @@ void App::save_settings() {
     f << "hidpi " << (hidpi ? 1 : 0) << "\n";
     f << "cartridge " << (render_cartridge ? 1 : 0) << "\n";
     f << "blend " << (frame_blend ? 1 : 0) << "\n";
+    f << "speed " << speed_index << "\n";
     f << "volume " << volume << "\n";
     f << "cgb " << (cgb_enabled ? 1 : 0) << "\n";
     f << "theme " << theme_mode << "\n";
+    // the shelf in front keeps the live position, the other its remembered one
+    f << "shelf " << library_tab << "\n";
+    f << "shelfpos " << (library_tab == 0 ? carousel_pos : shelf_pos[0]) << " "
+                     << (library_tab == 1 ? carousel_pos : shelf_pos[1]) << "\n";
     f << "dmgcolor " << (dmg_colorize ? 1 : 0) << "\n";
 #if GB_MOBILE
     f << "joystick " << (joystick_mode ? 1 : 0) << "\n";
@@ -535,7 +576,10 @@ void App::save_settings() {
 
 // destructor
 App::~App() {
+    save_settings();
     save_battery_ram();
+    if (state == AppState::PLAYING && active_slot >= 0)
+        write_state(active_slot);
     destroy_video();
     ImGui::DestroyContext();
 #if GB_DESKTOP
@@ -550,6 +594,8 @@ void App::run() {
     AppState prev_state = state;
     while (true) {
         handle_events();
+        if (quitting)
+            return;
 
 #if GB_MOBILE
         // ios forbids gpu work in the background, so pause the whole loop until we return
@@ -572,23 +618,34 @@ void App::run() {
                    happens whenever the lcd is off. in double speed the cpu runs twice as
                    fast while the ppu keeps its own clock, so a frame costs twice as many
                    cpu cycles and a fixed cap would cut every frame in half */
-                uint64_t frame_start = cpu->total_cycles;
-                while (!ppu->frame_ready &&
-                       cpu->total_cycles - frame_start < (mem->double_speed ? 140448u : 70224u)) {
-                    cpu->step();
+                /* one presentation is still one console frame's worth of wall clock, so
+                   running at another speed means emulating a different number of its
+                   frames in between. the debt carries the fraction across */
+                frame_debt += kSpeedMul[speed_index];
+                bool complete = false;
+                while (frame_debt >= 1.0f) {
+                    frame_debt -= 1.0f;
+                    uint64_t frame_start = cpu->total_cycles;
+                    while (!ppu->frame_ready &&
+                           cpu->total_cycles - frame_start
+                               < (mem->double_speed ? 140448u : 70224u)) {
+                        cpu->step();
+                    }
+                    complete = complete || ppu->frame_ready;
+                    ppu->frame_ready = false;
                 }
                 /* a frame that ended because the cycle cap ran out rather than because
                    the ppu finished it is half drawn, and putting that on screen is what
                    a tear is. with the lcd off nothing is being drawn at all, so whatever
                    is in there is settled and safe to take */
-                bool complete = ppu->frame_ready;
-                ppu->frame_ready = false;
                 /* switching the lcd off part way through a frame leaves that frame half
                    drawn, and the leftovers would sit on top of whatever comes next. the
                    buffer is only settled again once the ppu has faded it out, so until
                    then the last finished frame is what stays on screen */
                 if (complete || ppu->lcd_blanked) {
                     std::memcpy(frame_done, ppu->framebuffer, sizeof frame_done);
+                    std::memcpy(obj_before, obj_now, sizeof obj_before);
+                    std::memcpy(obj_now, ppu->obj_pixel, sizeof obj_now);
                     have_frame_done = true;
                     blend_frame();
                 }
@@ -622,8 +679,13 @@ void App::run() {
         }
 
         if (state != prev_state) {
-            if (prev_state == AppState::PLAYING)
+            if (prev_state == AppState::PLAYING) {
                 save_battery_ram();
+                // backing out of a game puts it back in the slot it came from
+                if (active_slot >= 0)
+                    write_state(active_slot);
+                active_slot = -1;
+            }
             ImGui::GetIO().ClearInputKeys();
             ImGui::GetIO().ClearInputMouse();
             prev_state = state;
@@ -658,6 +720,53 @@ int App::library_view(std::vector<int>& out) const {
    halves rather than cutting, and it carries the olive of the rest of the ui on the mono
    side, easing into a muted two tone on the colour side so the shelves read apart at a
    glance without breaking the palette */
+/* the carousel loops, so its position walks off past either end of the shelf and keeps
+   going. that is fine to draw from, it is wrapped on the way in, but it is not something
+   worth remembering: held onto and clamped back later it lands on the first or last
+   cartridge rather than the one that was on screen. folding it in while the shelf is at
+   rest is invisible and leaves a position that still means something next time */
+void App::settle_shelf(int count, int r_centre) {
+    if (count <= 0 || carousel_vel != 0.0f
+        || std::abs(carousel_pos - std::round(carousel_pos)) > 0.001f)
+        return;
+
+    float folded = (float)((((int)std::lround(carousel_pos) % count) + count) % count);
+    carousel_pos = carousel_target = folded;
+
+    // the place is written as soon as the shelf settles on a cartridge. waiting for the
+    // way out only works when there is one, and a phone is usually just killed
+    if (r_centre == shelf_saved)
+        return;
+    shelf_saved = r_centre;
+    shelf_pos[library_tab] = carousel_pos;
+    save_settings();
+}
+
+// hands the shelf being left its place back and takes the other's, clamped to what that
+// shelf actually holds so a shorter one cannot be indexed past its end
+void App::apply_tab_switch() {
+    if (pending_tab < 0)
+        return;
+    int want = pending_tab;
+    pending_tab = -1;
+    if (want == library_tab)
+        return;
+
+    shelf_pos[library_tab] = carousel_pos;
+    library_tab = want;
+
+    std::vector<int> view;
+    int count = library_view(view);
+    int at = (count > 0) ? ((((int)std::lround(shelf_pos[want]) % count) + count) % count) : 0;
+    carousel_pos = carousel_target = (float)at;
+    carousel_vel = 0.0f;
+    if (count > 0) {
+        carousel_index = view[at];
+        shelf_saved = carousel_index;
+    }
+    save_settings();
+}
+
 void App::draw_library_tabs(float cx, float cy, float pill_w, float pill_h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r   = pill_h * 0.5f;
@@ -668,11 +777,8 @@ void App::draw_library_tabs(float cx, float cy, float pill_w, float pill_h) {
     for (int i = 0; i < 2; i++) {
         ImGui::PushID(i);
         ImGui::SetCursorScreenPos(ImVec2(p0.x + seg * i, p0.y));
-        if (ImGui::InvisibleButton("##libtab", ImVec2(seg, pill_h)) && library_tab != i) {
-            library_tab = i;
-            carousel_pos = carousel_target = 0.0f;
-            carousel_vel = 0.0f;
-        }
+        if (ImGui::InvisibleButton("##libtab", ImVec2(seg, pill_h)) && library_tab != i)
+            pending_tab = i;
         ImGui::PopID();
     }
 
@@ -815,6 +921,7 @@ void App::load_rom(const std::string& name) {
     mem->load_rom(rom_data);
     cpu->apply_boot_state();
 
+    current_rom = name;
     load_battery_ram(name);
     // nothing of the last game should bleed into the first frames of this one
     frame_history = 0;
@@ -860,7 +967,8 @@ void App::load_battery_ram(const std::string& name) {
     // a timer cartridge is worth a save file even with no ram behind it
     if (!mem->has_battery || (mem->external_ram.empty() && !mem->has_rtc))
         return;
-    save_path = rom_folder + std::filesystem::path(name).stem().string() + ".sav";
+    // active_slot is set before the cartridge is loaded, so it picks the file here
+    save_path = battery_path(name, active_slot);
 
     std::ifstream f(save_path, std::ios::binary);
     if (!f)
@@ -886,6 +994,99 @@ void App::load_battery_ram(const std::string& name) {
             mem->rtc_advance(now - stamp);
     }
     mem->ram_dirty = false;
+}
+
+/* a state is the whole machine at one t-cycle: cpu, bus, cartridge, ppu mid scanline and
+   apu mid note. the cartridge rom is not in it, so the header is stamped in to make sure
+   a state can only ever be loaded back into the game it came from */
+std::string App::battery_path(const std::string& rom, int slot) const {
+    std::string stem = rom_folder + std::filesystem::path(rom).stem().string();
+    return (slot < 0) ? stem + ".sav"
+                      : stem + ".slot" + std::to_string(slot + 1) + ".sav";
+}
+
+std::string App::state_slot_path(const std::string& rom, int slot) const {
+    return rom_folder + std::filesystem::path(rom).stem().string()
+         + ".st" + std::to_string(slot + 1);
+}
+
+bool App::write_state(int slot) {
+    if (!mem || !cpu || !ppu || !apu || current_rom.empty() || mem->rom.size() < 0x150)
+        return false;
+    std::string path = state_slot_path(current_rom, slot);
+
+    std::vector<uint8_t> out;
+    state::Writer w{out};
+    w.raw(state::kMagic);
+    w.raw(state::kVersion);
+    w.bytes(mem->rom.data() + 0x134, 0x1A);   // title through the header checksum
+    uint32_t rom_size = (uint32_t)mem->rom.size();
+    w.raw(rom_size);
+    cpu->save_state(w);
+    mem->save_state(w);
+    ppu->save_state(w);
+    apu->save_state(w);
+
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f)
+        return false;
+    f.write(reinterpret_cast<const char*>(out.data()), (std::streamsize)out.size());
+    return (bool)f;
+}
+
+bool App::read_state(int slot) {
+    if (!mem || !cpu || !ppu || !apu || current_rom.empty() || mem->rom.size() < 0x150)
+        return false;
+
+    state_stale = false;
+    std::ifstream f(state_slot_path(current_rom, slot), std::ios::binary);
+    if (!f)
+        return false;
+    std::vector<uint8_t> in{std::istreambuf_iterator<char>(f),
+                            std::istreambuf_iterator<char>()};
+
+    /* the same build saving the same cartridge always produces the same length, so
+       comparing against a fresh save catches a truncated or foreign file before any of
+       it is allowed to touch the running machine */
+    std::vector<uint8_t> reference;
+    state::Writer rw{reference};
+    rw.raw(state::kMagic);
+    rw.raw(state::kVersion);
+    rw.bytes(mem->rom.data() + 0x134, 0x1A);
+    uint32_t rom_size = (uint32_t)mem->rom.size();
+    rw.raw(rom_size);
+    cpu->save_state(rw);
+    mem->save_state(rw);
+    ppu->save_state(rw);
+    apu->save_state(rw);
+    if (in.size() != reference.size()) {
+        state_stale = true;
+        return false;
+    }
+    // the header carries the cartridge's identity, so this also rejects another game
+    if (!std::equal(in.begin(), in.begin() + 0x26, reference.begin()))
+        return false;
+
+    state::Reader r{in.data(), in.data() + in.size()};
+    uint32_t magic = 0, version = 0;
+    r.raw(magic);
+    r.raw(version);
+    if (magic != state::kMagic || version != state::kVersion)
+        return false;
+    uint8_t header[0x1A];
+    r.bytes(header, sizeof header);
+    r.raw(rom_size);
+    cpu->load_state(r);
+    mem->load_state(r);
+    ppu->load_state(r);
+    apu->load_state(r);
+    if (!r.ok)
+        return false;
+
+    // nothing of the frame that was on screen belongs to the one being resumed
+    have_frame_done = false;
+    frame_history = 0;
+    return true;
 }
 
 void App::save_battery_ram() {
@@ -935,13 +1136,20 @@ void App::blend_frame() {
     const uint32_t* cur = &frame_done[0][0];
     uint32_t* p1 = &frame_prev[0][0];
     uint32_t* p2 = &frame_prev2[0][0];
+    uint32_t* p3 = &frame_prev3[0][0];
 
-    // find the pixels that are strobing right now
+    /* a pixel matching the frame before last is not enough on its own: ordinary moving
+       artwork lands back on an earlier value often enough that a two frame test picks up
+       half the screen. a real strobe alternates, so the frame before this one has to
+       match the one three back as well before any of it is believed */
     for (int y = 0; y < 144; y++)
         for (int x = 0; x < 160; x++) {
             int i = y * 160 + x;
-            flicker_tmp[y][x] = (frame_history >= 2 && cur[i] == p2[i] && cur[i] != p1[i])
-                              ? 1 : 0;
+            // and it only counts where an object was actually drawn, in this frame or
+            // the one before, which is where the trick lives
+            bool sprite_here = obj_now[y][x] || obj_before[y][x];
+            flicker_tmp[y][x] = (frame_history >= 3 && sprite_here && cur[i] == p2[i]
+                                 && p1[i] == p3[i] && cur[i] != p1[i]) ? 1 : 0;
         }
 
     // grow that outwards, one axis at a time so the cost stays linear
@@ -982,17 +1190,18 @@ void App::blend_frame() {
             } else {
                 out[i] = c;
             }
+            p3[i] = p2[i];
             p2[i] = p1[i];
             p1[i] = c;
         }
-    if (frame_history < 2)
+    if (frame_history < 3)
         frame_history++;
 }
 
 const uint32_t* App::present_frame() const {
     if (!have_frame_done)
         return &ppu->framebuffer[0][0];
-    return frame_blend && frame_history >= 2 ? &frame_out[0][0] : &frame_done[0][0];
+    return frame_blend && frame_history >= 3 ? &frame_out[0][0] : &frame_done[0][0];
 }
 
 // the renderer of the games inside the actual emulator
@@ -1054,6 +1263,19 @@ void App::render_game() {
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
 
     SDL_RenderPresent(renderer);
+    // a brief word in the corner after a state is written or restored
+    if (state_note_until > SDL_GetTicks()) {
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        ImVec2 pad(10.0f, 8.0f);
+        ImVec2 sz = ImGui::CalcTextSize(state_note.c_str());
+        ImVec2 p0(pad.x, pad.y);
+        ImVec2 p1(p0.x + sz.x + pad.x * 2.0f, p0.y + sz.y + pad.y);
+        dl->AddRectFilled(p0, p1, glass::fill(theme::at().panel), 8.0f);
+        glass::rect(dl, p0, p1, 8.0f);
+        dl->AddText(ImVec2(p0.x + pad.x, p0.y + pad.y * 0.5f),
+                    theme::at().text, state_note.c_str());
+    }
+
     if (!in_live_resize) pace(kGbFps);
 }
 
@@ -1228,27 +1450,7 @@ void App::draw_mods(float w, float h) {
 
             ImGui::PopID();
         }
-        {
-            ImGuiIO& sio = ImGui::GetIO();
-            float cur     = ImGui::GetScrollY();
-            float view_h  = ImGui::GetWindowSize().y;
-            float content = ImGui::GetCursorPosY();
-            float maxs    = std::max(0.0f, content - view_h);
-            bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
-                                                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-            if (hovered && sio.MouseWheel != 0.0f) {
-                float base = (std::abs(mods_scroll - cur) > 0.5f) ? mods_scroll : cur;
-                mods_scroll = base - sio.MouseWheel * 60.0f;
-            }
-            mods_scroll = std::clamp(mods_scroll, 0.0f, maxs);
-            if (std::abs(mods_scroll - cur) > 0.5f) {
-                float next = cur + (mods_scroll - cur) * std::min(1.0f, sio.DeltaTime * 16.0f);
-                if (std::abs(mods_scroll - next) < 0.5f) next = mods_scroll;
-                ImGui::SetScrollY(next);
-            } else {
-                mods_scroll = cur;
-            }
-        }
+        scroll_body(mods_scroll);
         ImGui::EndChild();
 
         int picked = 0;
@@ -1407,6 +1609,67 @@ namespace {
     constexpr int kSettingsTabCount = (int)(sizeof(kSettingsTabs) / sizeof(kSettingsTabs[0]));
 }
 
+
+/* the lists drive their own scrolling rather than letting imgui do it, because imgui's
+   scrollbar picks up the child rounding and clips the corners off the list. the wheel is
+   only half of it though: a touch screen has no wheel, so dragging the list has to move
+   it too, which is what was missing on the phone */
+void App::scroll_body(float& target) {
+    /* the rows place themselves with SetCursorPos, and a list whose last row does that
+       and then submits nothing leaves imgui thinking the cursor was moved past the end
+       for no reason, which trips an assert on debug builds. an empty item of no height
+       closes that off without moving the cursor or changing the height measured below */
+    ImGui::Dummy(ImVec2(0, 0));
+
+    ImGuiIO& io = ImGui::GetIO();
+    float cur     = ImGui::GetScrollY();
+    float view_h  = ImGui::GetWindowSize().y;
+    float content = ImGui::GetCursorPosY();
+    float maxs    = std::max(0.0f, content - view_h);
+    bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                          ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    float shown = cur;   // where the bar should sit once this frame's move is applied
+
+    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+        // a finger follows the list exactly, so no easing on this path
+        target = std::clamp(cur - io.MouseDelta.y, 0.0f, maxs);
+        ImGui::SetScrollY(target);
+        shown = target;
+    } else {
+        if (hovered && io.MouseWheel != 0.0f) {
+            float base = (std::abs(target - cur) > 0.5f) ? target : cur;
+            target = base - io.MouseWheel * 60.0f;
+        }
+        target = std::clamp(target, 0.0f, maxs);
+        if (std::abs(target - cur) > 0.5f) {
+            float next = cur + (target - cur) * std::min(1.0f, io.DeltaTime * 16.0f);
+            if (std::abs(target - next) < 0.5f)
+                next = target;
+            ImGui::SetScrollY(next);
+            shown = next;
+        } else {
+            target = cur;
+        }
+    }
+
+    /* a hairline of a bar, just enough to say the list runs on. it is drawn last and off
+       the position actually applied, so it tracks the list while it is being dragged
+       rather than lagging a frame behind or vanishing */
+    if (maxs > 0.0f && content > 0.0f) {
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImVec2 wsz = ImGui::GetWindowSize();
+        float bar_w = 3.0f;
+        float thumb = std::max(24.0f, wsz.y * (view_h / content));
+        float t = std::clamp(shown / maxs, 0.0f, 1.0f);
+        float ty = wp.y + t * (wsz.y - thumb);
+        float bx = wp.x + wsz.x - bar_w - 2.0f;
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(bx, ty), ImVec2(bx + bar_w, ty + thumb),
+            IM_COL32(255, 255, 255, 46), bar_w * 0.5f);
+    }
+}
+
+
 void App::draw_settings(float w, float h) {
 #if GB_MOBILE
     float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
@@ -1516,6 +1779,17 @@ void App::draw_settings(float w, float h) {
         float ctrl_w = 132.0f * ui;
         float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         bool any_open = false;
+            /* a control lights up only while a pointer rests on it. there is no such
+               thing on a touch screen, where it would just leave the last thing tapped
+               looking selected, and the control already says what it is set to */
+            auto pointer_on = [&]() {
+#if GB_DESKTOP
+                return ImGui::IsItemHovered();
+#else
+                return false;
+#endif
+            };
+
             auto combo_row = [&](const char* text, const char* id,
                                  const char* const* items, int n, int cur) {
                 int picked = cur;
@@ -1534,10 +1808,16 @@ void App::draw_settings(float w, float h) {
                 ImGui::SetNextWindowSizeConstraints(ImVec2(cw, 0.0f), ImVec2(cw, 99999.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
                 ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0, 0, 0, 0));
+                /* the control is drawn by hand below, so imgui's own frame has to go
+                   entirely. leaving the active one in was what put a faint rectangle
+                   over the control the moment the list opened */
+                ImGui::PushStyleColor(ImGuiCol_FrameBg,        ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive,  ImVec4(0, 0, 0, 0));
                 bool open = ImGui::BeginCombo(id, "", ImGuiComboFlags_NoArrowButton);
-                ImGui::PopStyleColor();
+                ImGui::PopStyleColor(4);
                 ImGui::PopStyleVar();
-                bool hot_c = open || ImGui::IsItemHovered();
+                bool hot_c = pointer_on();
                 if (open) {
                     any_open = true;
                     ImGui::SetWindowPos(ImVec2(cpos.x, cpos.y + chh));
@@ -1549,10 +1829,15 @@ void App::draw_settings(float w, float h) {
                     // body cut the last options off the bottom, it only has to stay on screen
                     ImDrawList* pdl = ImGui::GetWindowDrawList();
                     pdl->PushClipRectFullScreen();
-                    pdl->AddRectFilled(ImVec2(cpos.x - 1.0f, top),
-                                       ImVec2(cpos.x + cw + 1.0f, bottom),
-                                       theme::at().panel, 8.0f,
+                    // exactly the control's width. a pixel proud on either side showed
+                    // as a hairline down the sides of the open list
+                    pdl->AddRectFilled(ImVec2(cpos.x, top),
+                                       ImVec2(cpos.x + cw, bottom),
+                                       theme::at().track, 8.0f,
                                        ImDrawFlags_RoundCornersBottom);
+                    glass::rect(pdl, ImVec2(cpos.x, top),
+                                ImVec2(cpos.x + cw, bottom), 8.0f,
+                                ImDrawFlags_RoundCornersBottom);
 
                     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
                     for (int i = 0; i < n; i++) {
@@ -1562,7 +1847,7 @@ void App::draw_settings(float w, float h) {
                             picked = i;
                             ImGui::CloseCurrentPopup();
                         }
-                        bool hot_i = ImGui::IsItemHovered();
+                        bool hot_i = pointer_on();
                         if (hot_i || i == cur) {
                             float in = 3.0f;
                             float y0 = (i == 0)     ? top          : ip.y;
@@ -1588,8 +1873,14 @@ void App::draw_settings(float w, float h) {
                 if (!covered) {
                     ImDrawList* fg = ImGui::GetForegroundDrawList();
                     fg->PushClipRect(body_min, body_max, true);
+                    /* the list tucks its top edge under this control on purpose, which
+                       only reads right if the control is solid. the glass fill is part
+                       transparent, so an opaque coat goes down first or the list's own
+                       panel and its highlight show straight through the button */
                     ImU32 cbg = glass::fill(hot_c ? theme::at().accent
                                                   : theme::at().button);
+                    fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh),
+                                      theme::at().panel, 8.0f);
                     fg->AddRectFilled(cpos, ImVec2(cpos.x + cw, cpos.y + chh), cbg, 8.0f);
                     glass::rect(fg, cpos, ImVec2(cpos.x + cw, cpos.y + chh), 8.0f);
                     ImVec2 cts = ImGui::CalcTextSize(items[cur]);
@@ -1613,17 +1904,36 @@ void App::draw_settings(float w, float h) {
                 tp.x = right_edge - ctrl_gap - tw;
                 ImGui::SetCursorScreenPos(tp);
                 bool hit = ImGui::InvisibleButton(id, ImVec2(tw, fh));
-                bool hot_t = ImGui::IsItemHovered();
+                bool hot_t = pointer_on();
                 float ty = tp.y + (fh - th) * 0.5f;
                 ImDrawList* tdl = ImGui::GetWindowDrawList();
                 // the off state needs the groove colour too, panel is the sheet behind it
                 ImU32 track = on ? (hot_t ? theme::at().accent : theme::at().button)
                                  : (hot_t ? theme::at().surface : theme::at().track);
                 tdl->AddRectFilled(ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), track, th * 0.5f);
+                glass::rect(tdl, ImVec2(tp.x, ty), ImVec2(tp.x + tw, ty + th), th * 0.5f);
                 float kr = th * 0.5f - 3.0f;
                 float kx = on ? tp.x + tw - kr - 3.0f : tp.x + kr + 3.0f;
                 tdl->AddCircleFilled(ImVec2(kx, ty + th * 0.5f), kr,
                                      IM_COL32(255, 255, 255, 255), 24);
+                return hit;
+            };
+
+            // a row whose control is a plain button, for the things that are an action
+            // rather than a setting
+            auto action_row = [&](const char* text, const char* id, const char* label) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(text);
+                ImGui::SameLine();
+
+                float fh = ImGui::GetFrameHeight();
+                float bw = ImGui::CalcTextSize(label).x + fh;
+                ImVec2 bp = ImGui::GetCursorScreenPos();
+                bp.x = right_edge - ctrl_gap - bw;
+                ImGui::SetCursorScreenPos(bp);
+                ImGui::PushID(id);
+                bool hit = glass::button(label, ImVec2(bw, fh));
+                ImGui::PopID();
                 return hit;
             };
 
@@ -1639,7 +1949,7 @@ void App::draw_settings(float w, float h) {
                 sp.x = right_edge - ctrl_gap - sw;
                 ImGui::SetCursorScreenPos(sp);
                 ImGui::InvisibleButton(id, ImVec2(sw, fh));
-                bool hot_s = ImGui::IsItemHovered() || ImGui::IsItemActive();
+                bool hot_s = pointer_on();
                 if (ImGui::IsItemActive())
                     v = std::clamp((ImGui::GetIO().MousePos.x - sp.x) / sw, 0.0f, 1.0f);
 
@@ -1653,6 +1963,7 @@ void App::draw_settings(float w, float h) {
                     sdl->AddRectFilled(ImVec2(sp.x, ty), ImVec2(sp.x + sw * v, ty + th),
                                        hot_s ? theme::at().accent
                                              : theme::at().button, th * 0.5f);
+                glass::rect(sdl, ImVec2(sp.x, ty), ImVec2(sp.x + sw, ty + th), th * 0.5f);
                 sdl->AddCircleFilled(ImVec2(sp.x + sw * v, ty + th * 0.5f), fh * 0.26f,
                                      IM_COL32(255, 255, 255, 255), 24);
                 return v;
@@ -1741,6 +2052,23 @@ void App::draw_settings(float w, float h) {
         }
 
         case TAB_GAME: {
+            /* the slot was picked on the way in and is written again on the way out,
+               so this is only here for saving part way through without leaving */
+            if (state == AppState::PLAYING && active_slot >= 0) {
+                std::string label = "save to slot " + std::to_string(active_slot + 1);
+                if (action_row(label.c_str(), "##savest", "save")) {
+                    state_note = write_state(active_slot) ? "saved" : "could not save";
+                    state_note_until = SDL_GetTicks() + 1500;
+                }
+            }
+
+            int sp = combo_row("speed", "##speed", kSpeedNames, 8, speed_index);
+            if (sp != speed_index) {
+                speed_index = sp;
+                frame_debt = 0.0f;
+                save_settings();
+            }
+
             // games that flicker a sprite every other frame to fake a see through one
             // rely on the panel being slow, so the two frames are averaged for them
             if (toggle_row("motion blur", "##blend", frame_blend)) {
@@ -1793,27 +2121,7 @@ void App::draw_settings(float w, float h) {
             break;
         }
         }
-        {
-            ImGuiIO& sio = ImGui::GetIO();
-            float cur     = ImGui::GetScrollY();
-            float view_h  = ImGui::GetWindowSize().y;
-            float content = ImGui::GetCursorPosY();
-            float maxs    = std::max(0.0f, content - view_h);
-            bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
-                                                  ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-            if (hovered && sio.MouseWheel != 0.0f) {
-                float base = (std::abs(settings_scroll - cur) > 0.5f) ? settings_scroll : cur;
-                settings_scroll = base - sio.MouseWheel * 60.0f;
-            }
-            settings_scroll = std::clamp(settings_scroll, 0.0f, maxs);
-            if (std::abs(settings_scroll - cur) > 0.5f) {
-                float next = cur + (settings_scroll - cur) * std::min(1.0f, sio.DeltaTime * 16.0f);
-                if (std::abs(settings_scroll - next) < 0.5f) next = settings_scroll;
-                ImGui::SetScrollY(next);
-            } else {
-                settings_scroll = cur;
-            }
-        }
+        scroll_body(settings_scroll);
         ImGui::EndChild();
 
         ImGui::SetCursorPos(ImVec2(pad, ws.y - pad - close_h));
@@ -1863,8 +2171,10 @@ void App::handle_events() {
             ImGui_ImplSDL2_ProcessEvent(&event);
         }
 
+        // exiting here would step over the destructor, and with it the battery save, the
+        // state the session was started from, and the settings
         if (event.type == SDL_QUIT)
-            std::exit(0);
+            quitting = true;
 
 #if GB_DESKTOP
         if (event.type == SDL_WINDOWEVENT &&
@@ -1875,8 +2185,14 @@ void App::handle_events() {
 
 #if GB_MOBILE
         // stop rendering the moment the os tells us we are leaving the foreground, resume when back
-        if (event.type == SDL_APP_WILLENTERBACKGROUND || event.type == SDL_APP_DIDENTERBACKGROUND)
+        if (event.type == SDL_APP_WILLENTERBACKGROUND || event.type == SDL_APP_DIDENTERBACKGROUND) {
             active = false;
+            // this is as close to a shutdown as the os is going to give us
+            save_settings();
+            save_battery_ram();
+            if (state == AppState::PLAYING && active_slot >= 0)
+                write_state(active_slot);
+        }
         if (event.type == SDL_APP_DIDENTERFOREGROUND)
             active = true;
 #endif
@@ -1937,6 +2253,15 @@ void App::handle_events() {
         if (state == AppState::PLAYING)
             handle_touch_mobile(event);
 #endif
+
+        // saving part way through, into the slot the game was started from
+        if (GB_DESKTOP && state == AppState::PLAYING && !settings_open &&
+            event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F5 &&
+            active_slot >= 0) {
+            state_note = write_state(active_slot) ? "saved" : "could not save";
+            state_note_until = SDL_GetTicks() + 1500;
+            continue;
+        }
 
         if (GB_DESKTOP && state == AppState::PLAYING && !settings_open &&
             (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)) {
@@ -2273,6 +2598,7 @@ void App::render_menu() {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(theme::at().text_page));
 
     std::vector<int> view;
+    apply_tab_switch();
     int count = library_view(view);
 
     if (count == 0) {
@@ -2321,9 +2647,15 @@ void App::render_menu() {
         int r_centre = view[centre];
         carousel_index = r_centre;
 
+        settle_shelf(count, r_centre);
+
         if (!settings_open &&
-            (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)))
-            load_rom(rom_list[r_centre]);
+            (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))) {
+            // the slot list decides whether this is a fresh start or a resume
+            state_rom = rom_list[r_centre];
+            scan_slots(state_rom);
+            ImGui::OpenPopup("saves");
+        }
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 org = ImGui::GetWindowPos();
@@ -2454,8 +2786,12 @@ void App::render_menu() {
         float row_y  = title_y + h * 0.05f;
 
         ImGui::SetCursorPos(ImVec2(row_x, row_y));
-        if (glass::button("play", ImVec2(play_w, btn_h)))
-            load_rom(rom_list[r_centre]);
+        if (glass::button("play", ImVec2(play_w, btn_h))) {
+            // the slot list decides whether this is a fresh start or a resume
+            state_rom = rom_list[r_centre];
+            scan_slots(state_rom);
+            ImGui::OpenPopup("saves");
+        }
 
         ImGui::SetCursorPos(ImVec2(row_x + play_w + gap, row_y));
         if (glass::button("mods", ImVec2(mods_w, btn_h))) {
@@ -2471,6 +2807,7 @@ void App::render_menu() {
         ImGui::PopStyleColor(3);
 
         draw_mods(w, h);
+        draw_saves(w, h);
 
         ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 24));
@@ -2524,4 +2861,256 @@ void App::render_menu() {
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     SDL_RenderPresent(renderer);
     if (!in_live_resize) pace((double)kFpsCaps[fps_index]);
+}
+
+/* the slot list, shown when a game is picked. it borrows the settings sheet's sizing and
+   its tab, so it reads as the same kind of surface rather than a new one */
+
+// reads which slots a game has and when each was written, once, not every frame
+void App::scan_slots(const std::string& rom) {
+    slot_used.assign(kStateSlotScan, 0);
+    slot_when.assign(kStateSlotScan, std::string());
+    std::error_code ec;
+    for (int i = 0; i < kStateSlotScan; i++) {
+        std::string path = state_slot_path(rom, i);
+        if (!std::filesystem::exists(path, ec))
+            continue;
+        slot_used[i] = 1;
+        auto ft = std::filesystem::last_write_time(path, ec);
+        if (ec)
+            continue;
+        auto sys = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                       std::chrono::file_clock::to_sys(ft));
+        std::time_t tt = std::chrono::system_clock::to_time_t(sys);
+        char buf[32];
+        if (std::strftime(buf, sizeof buf, "%d %b  %H:%M", std::localtime(&tt)))
+            slot_when[i] = buf;
+    }
+}
+
+void App::draw_saves(float w, float h) {
+    // the same sheet the settings use, down to the row count, so the two are one size
+#if GB_MOBILE
+    float ui = std::max(1.0f, ImGui::GetIO().FontGlobalScale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * ui, 12.0f * ui));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * ui, 12.0f * ui));
+    int rows = 3;
+    float pw = w * 0.86f;
+#else
+    float ui = 1.0f;
+    int rows = 5;
+    float pw = std::min(w * 0.62f, 440.0f);
+#endif
+    float pad = 22.0f * ui, tab_h = 32.0f * ui, close_h = 40.0f * ui;
+    float row_h = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+    float ph = std::min(tab_h + pad * 3.0f + rows * row_h + close_h, h * 0.85f);
+
+    ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
+    if (ImGui::BeginPopupModal("saves", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoBackground)) {
+
+        ImVec2 wp = ImGui::GetWindowPos();
+        ImVec2 ws = ImGui::GetWindowSize();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        // one tab, drawn the same way the settings categories are but sitting at the
+        // left edge, and it is only a label so it takes no input
+        const char* name = "saves";
+        float tab_w = ImGui::CalcTextSize(name).x + 34.0f * ui;
+        float tx = wp.x + 26.0f * ui;
+        dl->AddRectFilled(ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h + 26.0f * ui),
+                          glass::fill(theme::at().accent), 12.0f * ui,
+                          ImDrawFlags_RoundCornersTop);
+        glass::rect(dl, ImVec2(tx, wp.y), ImVec2(tx + tab_w, wp.y + tab_h),
+                    12.0f * ui, ImDrawFlags_RoundCornersTop);
+        ImVec2 ts = ImGui::CalcTextSize(name);
+        dl->AddText(ImVec2(tx + (tab_w - ts.x) * 0.5f, wp.y + (tab_h - ts.y) * 0.5f),
+                    theme::at().text, name);
+
+        ImVec2 sheet0(wp.x, wp.y + tab_h);
+        ImVec2 sheet1(wp.x + ws.x, wp.y + ws.y);
+        dl->AddRectFilled(sheet0, sheet1, theme::at().panel, 22.0f * ui);
+        if (iridescence > 0.0f)
+            iri::field_rounded(dl, sheet0, sheet1, 22.0f * ui,
+                               (float)ImGui::GetTime(), iridescence * 0.5f);
+
+        float inner_w = ws.x - pad * 2.0f;
+        float body_y  = tab_h + pad;
+        float body_h  = ws.y - body_y - pad * 2.0f - close_h;
+
+        ImGui::SetCursorPos(ImVec2(pad, body_y));
+        ImGui::BeginChild("saves_body", ImVec2(inner_w, body_h), false,
+                          ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+
+        float ctrl_gap = 14.0f * ui;
+        float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        bool launched = false;
+        std::error_code ec;
+
+        /* every slot that exists is listed, and exactly one empty one past them. a gap
+           left by a delete counts as that empty one rather than adding another */
+        int highest = -1, first_free = -1;
+        for (int i = 0; i < (int)slot_used.size(); i++) {
+            if (slot_used[i])
+                highest = i;
+            else if (first_free < 0)
+                first_free = i;
+        }
+        if (first_free < 0)
+            first_free = kStateSlotScan;
+        int shown = std::max(highest + 1, first_free + 1);
+
+        // opening the cartridge on its own, with only its battery save behind it
+        {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("battery save");
+            ImGui::SameLine();
+            float fh = ImGui::GetFrameHeight();
+            float row = fh * 1.2f;   // the same height the slots below it use
+            float bw = ImGui::CalcTextSize("play").x + fh;
+            ImVec2 tp = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ImVec2(right_edge - ctrl_gap - bw,
+                                             tp.y - (row - fh) * 0.5f));
+            if (glass::button("play", ImVec2(bw, row))) {
+                // no slot, so this reads the plain .sav and nothing is written back
+                // as a state on the way out
+                active_slot = -1;
+                load_rom(state_rom);
+                launched = true;
+            }
+        }
+
+        for (int i = 0; i < shown && !launched; i++) {
+            ImGui::PushID(i);
+            bool used = i < (int)slot_used.size() && slot_used[i];
+            std::string label = "slot " + std::to_string(i + 1);
+            std::string when = used ? slot_when[i] : std::string();
+
+            /* the name sits above its date and the pair is centred against the row, so a
+               slot with a date has its name nudged up rather than the date hanging off
+               the bottom */
+            float fh = ImGui::GetFrameHeight();
+            float lh = ImGui::GetTextLineHeight();
+            float lgap = 2.0f * ui;
+            float block = when.empty() ? lh : (lh * 2.0f + lgap);
+            /* the row stands taller than a bare control so the delete can be a square of
+               its full height, the way the one under the cover art is. sized to the frame
+               alone it comes out cramped against the button beside it */
+            float row = std::max(fh * 1.2f, block);
+
+            ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(1.0f, row));
+            ImVec2 after = ImGui::GetCursorScreenPos();
+
+            ImDrawList* rdl = ImGui::GetWindowDrawList();
+            float ty = rp.y + (row - block) * 0.5f;
+            rdl->AddText(ImVec2(rp.x, ty), theme::at().text, label.c_str());
+            if (!when.empty())
+                rdl->AddText(ImVec2(rp.x, ty + lh + lgap),
+                             ImGui::GetColorU32(ImGuiCol_TextDisabled), when.c_str());
+
+            // both controls take the whole row, matching play, mods and delete on the
+            // main screen, which are all one height
+            const char* verb = used ? "continue" : "new game";
+            float bw = ImGui::CalcTextSize(verb).x + fh;
+            float by = rp.y;
+
+            ImVec2 wpos = ImGui::GetWindowPos();
+            if (used) {
+                /* trash_button places itself with window relative coordinates, so the
+                   screen position has to come back into this child's own space or it
+                   lands outside the clip and never appears */
+                float lx = right_edge - ctrl_gap - row - wpos.x + ImGui::GetScrollX();
+                float ly = by - wpos.y + ImGui::GetScrollY();
+                ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.16f, 0.08f, 0.50f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.35f, 0.10f, 0.05f, 0.50f));
+                // the confirmation itself is put up outside this list, a popup opened
+                // inside the scrolling child gets clipped by it
+                if (trash_button("##del", lx, ly, row, row))
+                    state_pending_slot = i;
+                ImGui::PopStyleColor(3);
+            }
+
+            float bx = used ? right_edge - ctrl_gap - row - ctrl_gap - bw
+                            : right_edge - ctrl_gap - bw;
+            ImGui::SetCursorScreenPos(ImVec2(bx, by));
+            if (glass::button(verb, ImVec2(bw, row))) {
+                /* the slot is picked before the cartridge is loaded, because it is what
+                   decides which cartridge save comes off disk. a slot with no state is a
+                   new game, so anything a half finished session left behind under it is
+                   cleared out first and the cartridge really does start blank */
+                active_slot = i;
+                if (!used)
+                    std::filesystem::remove(battery_path(state_rom, i), ec);
+                load_rom(state_rom);
+                if (used && !read_state(i)) {
+                    /* the cartridge save is its own file and is already loaded, so a
+                       state the build can no longer read costs the exact moment it was
+                       taken at, not the game's own progress */
+                    state_note = state_stale ? "that state is from an older build"
+                                             : "that state would not load";
+                    state_note_until = SDL_GetTicks() + 1500;
+                }
+                launched = true;
+            }
+
+            // the row reserved its own height, so the next one starts below it
+            ImGui::SetCursorScreenPos(after);
+            ImGui::PopID();
+        }
+
+        scroll_body(saves_scroll);
+        ImGui::EndChild();
+
+        if (state_pending_slot >= 0 && !ImGui::IsPopupOpen("confirm_state_delete"))
+            ImGui::OpenPopup("confirm_state_delete");
+
+        ImGui::SetNextWindowPos(ImVec2(w * 0.5f, h * 0.5f), ImGuiCond_Appearing,
+                                ImVec2(0.5f, 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 24));
+        if (ImGui::BeginPopupModal("confirm_state_delete", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoMove)) {
+            std::string q = "delete slot " + std::to_string(state_pending_slot + 1) + " ?";
+            ImGui::TextUnformatted(q.c_str());
+            ImGui::Dummy(ImVec2(0, h * 0.02f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.12f, 0.06f, 0.50f));
+            if (glass::button("delete", ImVec2(w * 0.10f, close_h))) {
+                std::filesystem::remove(state_slot_path(state_rom, state_pending_slot), ec);
+                // the slot's cartridge save is part of the slot, it goes with it
+                std::filesystem::remove(battery_path(state_rom, state_pending_slot), ec);
+                scan_slots(state_rom);
+                state_pending_slot = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (glass::button("cancel", ImVec2(w * 0.10f, close_h))) {
+                state_pending_slot = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar();
+
+        if (!launched) {
+            ImGui::SetCursorPos(ImVec2(pad, ws.y - pad - close_h));
+            if (glass::button("cancel", ImVec2(inner_w, close_h)))
+                ImGui::CloseCurrentPopup();
+        }
+
+        if (launched)
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+#if GB_MOBILE
+    ImGui::PopStyleVar(2);
+#endif
 }

@@ -122,10 +122,12 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 - **Cartridge carousel** — each game's box art is composited into a Game Boy cartridge shell, with real blurred drop shadows and momentum scrolling.
 - **Light and dark themes** — both palettes come off the app icons, which are exact inverses of one another. Follows the system appearance by default, with an auto / light / dark override.
 - **Iridescent backdrop** — the colour shelf, the settings sheet over it and any cartridge running in colour carry a slow drifting field of soft blobs, composited so that where two cross the colour is a third one neither owns.
+- **Speed** — x0.25 through x2 in Settings → Game. The panel is still presented at the console's own rate, so the setting decides how many of its frames are emulated between one presentation and the next, and the quarter steps carry their fraction across rather than rounding.
 - **Settings** — display, menu, game, audio and keybind tabs: screen fit, menu frame cap, VSync, HiDPI, cartridge rendering, master volume, theme, Game Boy Color on/off and mono colourisation.
 - **Motion blur** — a lot of games fake a translucent sprite by drawing it on every other frame and letting the original screen's slow pixels average the two. A modern display switches instantly and shows the strobe instead. This averages the two frames back together, but only around the pixels actually being strobed — a pixel that matches the frame before last and differs from the one in between. That region is grown a few pixels outwards and held for a few frames so it travels with a sprite that flickers while it moves. Anything merely moving never enters it, so the rest of the picture stays sharp; in practice a few percent of the screen is touched. Off by default, in Settings → Game.
+- **Save states** — picking a game opens its slot list. **battery save** at the top opens the cartridge on its own, with nothing but its `.sav` behind it; below that every slot that exists offers **continue**, with one empty **new game** slot past them, and a bin to throw one away. There is no fixed number of slots — a new one appears once the others are filled. Whichever slot is chosen belongs to that session and is written back automatically when you return to the menu, so nothing has to be remembered. `F5` or the row in Settings → Game saves part way through without leaving. The whole machine goes in: registers, bus, cartridge banking and clock, the PPU part way along a scanline with its pixel queue intact, the APU part way through a note. A state carries its cartridge's header and its exact length, so it can only ever be loaded back into the game it came from.
 - **Rebindable keys** — every button remappable from the UI.
-- **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves.
+- **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves. Each shelf remembers which cartridge you were on, so switching between them does not throw you back to the first one, and reopening the app puts you on the console and the game you left.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
 - **Mods** — per game IPS patches. Each library entry has its own mods panel: add a patch, toggle it on or off, and the enabled ones are applied to the ROM in memory at load, so the file on disk is never touched. Two-step delete for removing a patch.
 - **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android. `.gb` and `.gbc` both.
@@ -199,6 +201,7 @@ Defaults — all rebindable in **Settings → Keybinds**.
 | Start | `Enter` |
 | Select | `Backspace` |
 | Back to menu | `Esc` |
+| Save to the current slot | `F5` |
 
 On iOS and Android the d-pad, A, B, Start and Select are drawn from scratch rather than
 overlaid on a bezel image, laid out from the screen size and tracked per finger so
@@ -215,6 +218,7 @@ the app are copied there:
 ~/Library/Application Support/com.iediot/gbemu/
 ├── game-roms/      # .gb and .gbc files, and a .sav beside each battery-backed cartridge
 ├── mods/           # one folder per game, holding its .ips patches and which are enabled
+│                   # .st1 .st2 .st3 … beside each game are its save slots
 └── settings.txt    # scale, frame cap, vsync, hidpi, volume, theme, window geometry, keybinds
 ```
 
@@ -239,8 +243,8 @@ launch.
 - [x] MBC3 real-time clock, kept in the `.sav`
 - [x] Serial link port
 - [x] A pixel FIFO, so mid-scanline effects render at all
-- [ ] Save states
+- [x] Save states
 - [ ] Dot-level calibration of the FIFO against Mealybug Tearoom
 - [ ] The scanline the LCD comes back on (`lcdon_timing`, `lcdon_write_timing`)
-- [ ] Adjustable game speed / fast-forward
+- [x] Adjustable game speed
 - [x] Frame blending, for games that fake translucency by flickering sprites

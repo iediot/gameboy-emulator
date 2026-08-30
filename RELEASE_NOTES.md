@@ -12,28 +12,43 @@ timers and mappers all implemented from the hardware documentation.
 
 ### New in this release
 
-- **MBC3 real-time clock** — cartridges with a clock crystal now keep time. The counters
-  tick while the game runs, carry over correctly at every boundary, and catch up on the
-  time the console spent switched off, so a game that checks the date between sessions gets
-  the right answer. The clock is written into the `.sav` alongside the cartridge RAM, in
-  the layout the other emulators use.
-- **Link port** — serial transfers now complete instead of leaving the busy bit set
-  forever. Anything that started a transfer and waited for it used to hang.
-- **Sound on Game Boy Color hardware** — wave RAM access, the length counters across a
-  power cycle and the wave channel's start delay all behave the way the colour hardware
-  does rather than the way the original does. Blargg's `dmg_sound` and `cgb_sound` both
-  pass in full.
-- A glitching game that jumped into an undefined opcode used to take the whole app down
-  with it. It now locks up the emulated CPU on its own, which is what the hardware does.
-- Fixed the iridescent backdrop being drawn over the picture on a HiDPI display.
-- `EI` immediately followed by `HALT` no longer triggers the HALT bug, and a VRAM transfer
-  now costs the CPU the cycles it costs on hardware.
+- **Save states** — picking a game opens its slot list. **battery save** opens the
+  cartridge on its own with nothing but its `.sav`; below it every slot that exists
+  offers continue, with one fresh slot past them and a bin to throw one away. Slots are
+  not limited to a fixed number, a new one appears once the others are filled. The slot
+  picked belongs to that session and is written back on its own when you return to the
+  menu, so there is nothing to remember. `F5` saves part way through without leaving.
+  The whole machine is captured, down to the PPU part way along a scanline and the APU
+  part way through a note, so a state resumes on the exact cycle it was taken.
 
-- **Motion blur** — games that fake a see-through sprite by flashing it every other frame
-  counted on the original screen being slow enough to blur the two together. A modern
-  panel is not, so the sprite strobes instead. Turning this on averages those two frames
-  back together. Only the pixels actually flickering are touched, so nothing that simply
-  moves picks up a ghost. Settings → Game.
+- **A cartridge save per slot** — each slot keeps its own `.sav`, so two runs of the same
+  game no longer write over each other's in-game saves and starting a fresh slot really
+  does start fresh. **battery save** still uses the plain `.sav` next to the ROM, which is
+  the file every other emulator reads.
+
+- **Speed** — x0.25 to x2, in Settings → Game, for slowing a tricky bit down or skipping
+  through one.
+
+- **A rewritten picture pipeline.** The PPU is no longer a renderer that draws a finished
+  scanline at once, it is the pixel FIFO the hardware actually is: a fetcher walking the
+  tile map two dots at a stage into a queue, a shifter emptying it one pixel a dot, and
+  objects stalling the whole thing. Every register is read at the moment each pixel is
+  fetched, so a game that moves the scroll, swaps a palette or brings the window in part
+  way along a line now gets what the hardware would have drawn instead of one value
+  smeared across the row. The length of mode 3 falls out of that rather than being a
+  number in a table.
+
+- **The library remembers where you left it** — which shelf you were on and which
+  cartridge was in front on each of them, across a restart.
+
+- Fixed three corrupt entries in the colour table used to colourise original Game Boy
+  games, each of which straddled two palettes and gave the wrong colours.
+
+- Motion blur now only touches pixels an object actually drew. A background that happens
+  to scroll at exactly half its own pattern alternates every frame and is indistinguishable
+  from a strobe by any test on the picture alone, and it used to get blurred too.
+
+- Half-drawn frames are no longer put on screen, which is what the tearing was.
 
 ### Adding games
 

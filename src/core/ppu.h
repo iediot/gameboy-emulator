@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include "memory.h"
+#include "state.h"
 
 class Ppu {
 private:
@@ -47,6 +48,10 @@ public:
     // finished argb pixels, the dmg shades are baked in here so both the colour and the
     // monochrome path hand the frontend the same thing
     uint32_t framebuffer[144][160] = {};
+    /* which pixels an object won. the translucency trick is always done with objects, so
+       this is what lets the frontend tell a strobed sprite from a background that merely
+       happens to scroll at half its own pattern every frame */
+    uint8_t obj_pixel[144][160] = {};
     uint8_t prev_mode = 0;
     uint8_t window_line_counter = 0;
 
@@ -118,6 +123,9 @@ public:
     bool line_active = false;  // mode 3 is running and has pixels left to hand over
 
     void step(uint8_t cycles);
+
+    void save_state(state::Writer& w) const;
+    void load_state(state::Reader& r);
 };
 
 #endif //GAMEBOY_EMU_PPU_H

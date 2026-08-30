@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <array>
 #include <vector>
+#include "state.h"
 
 class Apu {
 private:
@@ -102,6 +103,10 @@ public:
     void write(uint16_t address, uint8_t value);
     void step(uint8_t cycles);
     void frame_tick();
+
+    // save states, see core/state.h
+    void save_state(state::Writer& w) const;
+    void load_state(state::Reader& r);
 };
 
 #endif //GAMEBOY_EMU_APU_H
