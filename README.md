@@ -125,9 +125,10 @@ Wario Land, Link's Awakening, Mega Man II, DuckTales, Pokémon Red / Blue / Yell
 - **Speed** — x0.25 through x2 in Settings → Game. The panel is still presented at the console's own rate, so the setting decides how many of its frames are emulated between one presentation and the next, and the quarter steps carry their fraction across rather than rounding.
 - **Settings** — display, menu, game, audio and keybind tabs: screen fit, menu frame cap, VSync, HiDPI, cartridge rendering, master volume, theme, Game Boy Color on/off and mono colourisation.
 - **Motion blur** — a lot of games fake a translucent sprite by drawing it on every other frame and letting the original screen's slow pixels average the two. A modern display switches instantly and shows the strobe instead. This averages the two frames back together, but only around the pixels actually being strobed — a pixel that matches the frame before last and differs from the one in between. That region is grown a few pixels outwards and held for a few frames so it travels with a sprite that flickers while it moves. Anything merely moving never enters it, so the rest of the picture stays sharp; in practice a few percent of the screen is touched. Off by default, in Settings → Game.
-- **Save states** — picking a game opens its slot list. **battery save** at the top opens the cartridge on its own, with nothing but its `.sav` behind it; below that every slot that exists offers **continue**, with one empty **new game** slot past them, and a bin to throw one away. There is no fixed number of slots — a new one appears once the others are filled. Whichever slot is chosen belongs to that session and is written back automatically when you return to the menu, so nothing has to be remembered. `F5` or the row in Settings → Game saves part way through without leaving. The whole machine goes in: registers, bus, cartridge banking and clock, the PPU part way along a scanline with its pixel queue intact, the APU part way through a note. A state carries its cartridge's header and its exact length, so it can only ever be loaded back into the game it came from.
+- **Save states** — picking a game opens its slot list. **battery save** at the top opens the cartridge on its own, with nothing but its `.sav` behind it; below that every slot that exists offers **continue**, with one empty **new game** slot past them, and a bin to throw one away. There is no fixed number of slots — a new one appears once the others are filled. Whichever slot is chosen belongs to that session and is written back automatically when you return to the menu, so nothing has to be remembered. `F5` or the row in Settings → Game saves part way through without leaving. The whole machine goes in: registers, bus, cartridge banking and clock, the PPU part way along a scanline with its pixel queue intact, the APU part way through a note. A state carries its cartridge's header and its exact length, so it can only ever be loaded back into the game it came from — and, because it is a dump of the core's own structures, into the build that wrote it. A state a newer build cannot read costs the moment it was taken at and nothing else, since the cartridge save beside it is read separately.
+- **A cartridge save per slot** — each slot keeps its own `.sav`, so two runs of the same game cannot write over each other's in-game progress and a fresh slot really does start on a blank cartridge. **battery save** uses the plain `.sav` next to the ROM, which is the file every other emulator reads. Throwing a slot away takes its cartridge save with it.
 - **Rebindable keys** — every button remappable from the UI.
-- **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves. Each shelf remembers which cartridge you were on, so switching between them does not throw you back to the first one, and reopening the app puts you on the console and the game you left.
+- **Persistence** — settings, keybinds, window size and position are restored on launch, and battery-backed cartridges keep their saves. On a phone, where the app is usually just killed rather than closed, the settings, the cartridge save and the open slot are all written the moment the system says it is going to the background. Each shelf remembers which cartridge you were on, so switching between them does not throw you back to the first one, and reopening the app puts you on the console and the game you left.
 - **Live resize** — the framebuffer follows the window while you drag it, not after.
 - **Mods** — per game IPS patches. Each library entry has its own mods panel: add a patch, toggle it on or off, and the enabled ones are applied to the ROM in memory at load, so the file on disk is never touched. Two-step delete for removing a patch.
 - **Add games** — native file picker on desktop, the system document picker on iOS, the storage access framework on Android. `.gb` and `.gbc` both.
@@ -216,10 +217,13 @@ the app are copied there:
 
 ```
 ~/Library/Application Support/com.iediot/gbemu/
-├── game-roms/      # .gb and .gbc files, and a .sav beside each battery-backed cartridge
+├── game-roms/      # .gb and .gbc files
+│                   # <game>.sav          the cartridge save behind "battery save"
+│                   # <game>.st1 .st2 …   one save state per slot
+│                   # <game>.slot1.sav …  the cartridge save belonging to that slot
 ├── mods/           # one folder per game, holding its .ips patches and which are enabled
-│                   # .st1 .st2 .st3 … beside each game are its save slots
-└── settings.txt    # scale, frame cap, vsync, hidpi, volume, theme, window geometry, keybinds
+└── settings.txt    # scale, frame cap, vsync, hidpi, volume, theme, speed, window
+                    # geometry, keybinds, and the shelf and cartridge last open
 ```
 
 Cover art is matched to a ROM by fuzzy name comparison against `assets/artworks/`, so
@@ -232,19 +236,3 @@ anything that only ever had one.
 On iOS the same layout sits inside the app container. On Android the covers stay
 read-only inside the APK and any bundled ROMs are seeded into internal storage on first
 launch.
-
-## Roadmap
-
-- [x] APU — all four channels
-- [x] Battery-backed saves written to `.sav`
-- [x] Game Boy Color — palettes, banking, HDMA, double speed
-- [x] Light and dark themes
-- [x] Wave RAM access timing, and the rest of the Game Boy Color sound differences
-- [x] MBC3 real-time clock, kept in the `.sav`
-- [x] Serial link port
-- [x] A pixel FIFO, so mid-scanline effects render at all
-- [x] Save states
-- [ ] Dot-level calibration of the FIFO against Mealybug Tearoom
-- [ ] The scanline the LCD comes back on (`lcdon_timing`, `lcdon_write_timing`)
-- [x] Adjustable game speed
-- [x] Frame blending, for games that fake translucency by flickering sprites
